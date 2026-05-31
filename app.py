@@ -307,6 +307,33 @@ section[data-testid="stSidebar"] .stSlider [data-baseweb="slider"] > div > div {
     color: {INK} !important; background: {CARD} !important; border: 1px solid {LINE} !important;
     border-radius: 3px !important; }}
 .js-plotly-plot .plotly .modebar {{ display: none !important; }}
+
+/* Methodology — stage pipeline */
+.zs-stageflow {{ display: flex; align-items: stretch; gap: 0; margin: 4px 0 2px 0; }}
+.zs-stage {{ flex: 1; background: {CARD}; border: 1px solid {LINE}; border-top: 4px solid {SLATE};
+    border-radius: 6px; padding: 13px 15px; position: relative; }}
+.zs-stage .step {{ font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700;
+    opacity: 0.85; }}
+.zs-stage .nm {{ font-family: 'Fraunces', serif !important; font-size: 15px; font-weight: 600;
+    color: {INK}; margin: 2px 0 5px 0; line-height: 1.2; }}
+.zs-stage .desc {{ font-size: 11.5px; color: {INK_SOFT}; line-height: 1.45; }}
+.zs-arrow {{ display: flex; align-items: center; justify-content: center; width: 26px; color: {SLATE};
+    font-size: 18px; flex: 0 0 26px; }}
+
+/* Simulator panel */
+.zs-panel {{ background: {CARD}; border: 1px solid {LINE}; border-radius: 8px; padding: 16px 18px; }}
+.zs-panel-h {{ font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700;
+    color: {SEC['method']}; margin-bottom: 10px; }}
+
+/* Status chips (policy explorer at-a-glance) */
+.zs-statusrow {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 12px 0; }}
+.zs-status {{ display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+    padding: 4px 10px; border-radius: 20px; border: 1px solid transparent; }}
+.zs-status.on {{ background: rgba(185,28,28,0.08); color: #B91C1C; border-color: rgba(185,28,28,0.25); }}
+.zs-status.off {{ background: rgba(22,163,74,0.08); color: #15803D; border-color: rgba(22,163,74,0.22); }}
+.zs-status.na {{ background: {PAPER}; color: {SLATE}; border-color: {LINE}; }}
+.zs-status .dot {{ width: 6px; height: 6px; border-radius: 50%; background: currentColor; }}
+
 .zs-footer {{ margin-top: 48px; padding-top: 14px; border-top: 1px solid {LINE}; font-size: 10.5px;
     letter-spacing: 0.10em; text-transform: uppercase; color: {SLATE}; display: flex;
     justify-content: space-between; }}
@@ -1034,31 +1061,71 @@ with tab3:
     else:
         pivot = pd.DataFrame()
     if len(pivot) >= 2:
-        chart_caption(f"Each line is one of the <b>{len(pivot)}</b> policies covering both brands. "
-                      f"Dot position = access score; a wider gap means the policy favours one brand more strongly.")
-        fig_pair = go.Figure()
-        for _, r in pivot.iterrows():
-            fig_pair.add_trace(go.Scatter(x=[r["STELARA"], r["TREMFYA"]],
-                                          y=[r["Policy #"], r["Policy #"]], mode="lines",
-                                          line=dict(color=LINE, width=2), showlegend=False, hoverinfo="skip"))
-        fig_pair.add_trace(go.Scatter(x=pivot["STELARA"], y=pivot["Policy #"], mode="markers", name="STELARA",
-                                      marker=dict(color=STELARA_C, size=13, line=dict(color="#FFFFFF", width=1.5)),
-                                      hovertemplate="<b>STELARA</b><br>%{y}<br>%{x:.0f} pts<extra></extra>"))
-        fig_pair.add_trace(go.Scatter(x=pivot["TREMFYA"], y=pivot["Policy #"], mode="markers", name="TREMFYA",
-                                      marker=dict(color=TREMFYA_C, size=13, line=dict(color="#FFFFFF", width=1.5)),
-                                      hovertemplate="<b>TREMFYA</b><br>%{y}<br>%{x:.0f} pts<extra></extra>"))
-        apply_layout(fig_pair, height=max(280, 30 * len(pivot) + 80),
-                     xaxis=dict(range=[-5, 105], title="Access Score (pts)",
-                                tickvals=[0, 25, 50, 75, 100], title_font=dict(size=12, color=INK_SOFT)),
-                     yaxis=dict(title=""), legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
-        st.plotly_chart(fig_pair, use_container_width=True, config={"displayModeBar": False})
-        t_h = int((pivot["delta"] > 0).sum()); s_h = int((pivot["delta"] < 0).sum())
+        t_h = int((pivot["delta"] > 0).sum())
+        s_h = int((pivot["delta"] < 0).sum())
         tie = int((pivot["delta"] == 0).sum())
         avg_d = pivot["delta"].mean()
-        cc = st.columns(3)
-        insight_tile(cc[0], "TREMFYA favoured", f"<b>{t_h} of {len(pivot)}</b> shared policies score TREMFYA higher.", accent=TREMFYA_C)
-        insight_tile(cc[1], "STELARA favoured", f"<b>{s_h} of {len(pivot)}</b> shared policies score STELARA higher{f' · {tie} tied' if tie else ''}.", accent=STELARA_C)
-        insight_tile(cc[2], "Average gap", f"TREMFYA vs STELARA within-policy: <b>{avg_d:+.0f} pts</b>.", accent=SEC["compare"])
+        n_pair = len(pivot)
+        fully_tied = (t_h == 0 and s_h == 0)
+
+        if fully_tied:
+            # The finding IS the tie: payers do not differentiate the two brands. Show each
+            # shared policy's (shared) access level, coloured by tier — far clearer than a
+            # dumbbell whose dots all overlap.
+            chart_caption(f"In every one of the <b>{n_pair}</b> shared policies, TREMFYA and STELARA "
+                          f"land on the <b>same access tier</b>. Bars below show that shared access level per policy.")
+            pv = pivot.sort_values("TREMFYA").copy()
+            pv["tier"] = pv["TREMFYA"].apply(access_tier)
+            fig_pair = go.Figure(go.Bar(
+                y=pv["Policy #"], x=pv["TREMFYA"], orientation="h",
+                marker=dict(color=[ACCESS_TIER_COLOR[t] for t in pv["tier"]],
+                            line=dict(color="#FFFFFF", width=1)),
+                text=[f"{int(v)} pts · {t}" for v, t in zip(pv["TREMFYA"], pv["tier"])],
+                textposition="outside", textfont=dict(size=11, color=INK_SOFT),
+                hovertemplate="%{y}<br>Both brands: %{x:.0f} pts<extra></extra>"))
+            fig_pair.add_vline(x=50, line=dict(color=ACCESS_TIER_COLOR["Parity"], width=1.2, dash="dot"))
+            apply_layout(fig_pair, height=max(260, 34 * n_pair + 80), showlegend=False,
+                         xaxis=dict(range=[0, 118], title="Shared access score (pts)",
+                                    tickvals=[0, 25, 50, 75, 100], title_font=dict(size=12, color=INK_SOFT)),
+                         yaxis=dict(title=""))
+            st.plotly_chart(fig_pair, use_container_width=True, config={"displayModeBar": False})
+            st.markdown(
+                f"""<div class="zs-takeaway" style="border-left-color:{SEC['compare']};">
+      <div class="k" style="color:{SEC['compare']};">Finding · brands move together</div>
+      <div class="t">Payers <b>do not differentiate TREMFYA from STELARA</b>: across all
+      <b>{n_pair}</b> shared policies the two land in the identical access tier. The access story is
+      driven by <b>which payer</b>, not which of these two brands — so a head-to-head won is, in
+      practice, a <b>payer-account win for both</b>.</div>
+    </div>""",
+                unsafe_allow_html=True)
+        else:
+            chart_caption(f"Each row is one of the <b>{n_pair}</b> policies covering both brands. "
+                          f"A wider gap between the dots means the policy favours one brand more strongly.")
+            pv = pivot.copy()
+            fig_pair = go.Figure()
+            for _, r in pv.iterrows():
+                fig_pair.add_trace(go.Scatter(x=[r["STELARA"], r["TREMFYA"]],
+                                              y=[r["Policy #"], r["Policy #"]], mode="lines",
+                                              line=dict(color=LINE, width=2), showlegend=False, hoverinfo="skip"))
+            fig_pair.add_trace(go.Scatter(x=pv["STELARA"], y=pv["Policy #"], mode="markers", name="STELARA",
+                                          marker=dict(color=STELARA_C, size=13, line=dict(color="#FFFFFF", width=1.5)),
+                                          hovertemplate="<b>STELARA</b><br>%{y}<br>%{x:.0f} pts<extra></extra>"))
+            fig_pair.add_trace(go.Scatter(x=pv["TREMFYA"], y=pv["Policy #"], mode="markers", name="TREMFYA",
+                                          marker=dict(color=TREMFYA_C, size=13, line=dict(color="#FFFFFF", width=1.5)),
+                                          hovertemplate="<b>TREMFYA</b><br>%{y}<br>%{x:.0f} pts<extra></extra>"))
+            apply_layout(fig_pair, height=max(280, 30 * n_pair + 80),
+                         xaxis=dict(range=[-5, 105], title="Access Score (pts)",
+                                    tickvals=[0, 25, 50, 75, 100], title_font=dict(size=12, color=INK_SOFT)),
+                         yaxis=dict(title=""), legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
+            st.plotly_chart(fig_pair, use_container_width=True, config={"displayModeBar": False})
+            cc = st.columns(3)
+            insight_tile(cc[0], "TREMFYA favoured",
+                         f"<b>{t_h} of {n_pair}</b> shared policies score TREMFYA higher.", accent=TREMFYA_C)
+            insight_tile(cc[1], "STELARA favoured",
+                         f"<b>{s_h} of {n_pair}</b> shared policies score STELARA higher.", accent=STELARA_C)
+            insight_tile(cc[2], "Tied / average gap",
+                         f"<b>{tie} of {n_pair}</b> tied · average gap <b>{avg_d:+.0f} pts</b> (TREMFYA − STELARA).",
+                         accent=SEC["compare"])
     else:
         st.info("Not enough policies cover both TREMFYA and STELARA under the current filters for a paired view.")
 
@@ -1161,29 +1228,34 @@ with tab5:
         added barrier — with <b>biologic step-through</b> the dominant deduction.</div></div>""",
         unsafe_allow_html=True)
 
-    section_h2("The three-stage logic", accent=SEC["method"])
-    sc = st.columns(3)
+    st.markdown('<div style="height:18px"></div>', unsafe_allow_html=True)
+    section_h2("The three-stage logic",
+               "Every policy runs through the same pipeline, left to right.", accent=SEC["method"])
     stages = [
-        ("Stage 1 · Coverage gate", "#B91C1C",
+        ("Stage 1", "Coverage gate", "#B91C1C",
          "Covered for PsO? If excluded → <b>0</b> and scoring stops. 0 is reserved for genuine non-access."),
-        ("Stage 2 · Step-therapy anchor", "#CA8A04",
-         "The binding constraint sets the tier. <b>Any biologic step → 25.</b> Conventional/phototherapy step → <b>50</b>. No step → <b>75</b>."),
-        ("Stage 3 · Secondary burden", "#16A34A",
+        ("Stage 2", "Step-therapy anchor", "#CA8A04",
+         "The binding constraint sets the base tier. <b>Any biologic step → 25.</b> Conventional / phototherapy step → <b>50</b>. No step → <b>75</b>."),
+        ("Stage 3", "Secondary burden", "#16A34A",
          "Specialist gating, below-label quantity limits, short reauth and extra steps each nudge the anchor down. <b>TB testing is never penalised.</b>"),
     ]
-    for col, (t, c, d) in zip(sc, stages):
-        col.markdown(
-            f"""<div class="zs-arch" style="border-top-color:{c}; height:100%;">
-              <div class="name" style="color:{c};">{t}</div>
-              <div class="desc">{d}</div></div>""",
-            unsafe_allow_html=True)
+    flow = '<div class="zs-stageflow">'
+    for i, (step, nm, c, d) in enumerate(stages):
+        flow += (f'<div class="zs-stage" style="border-top-color:{c};">'
+                 f'<div class="step" style="color:{c};">{step}</div>'
+                 f'<div class="nm">{nm}</div><div class="desc">{d}</div></div>')
+        if i < len(stages) - 1:
+            flow += '<div class="zs-arrow">&#8594;</div>'
+    flow += '</div>'
+    st.markdown(flow, unsafe_allow_html=True)
 
+    st.markdown('<div style="height:18px"></div>', unsafe_allow_html=True)
     section_h2("Score simulator",
                "Set a hypothetical policy's controls and watch the score resolve live — the exact logic behind every record.",
                accent=SEC["method"])
-    control_hint("Interactive · adjust the inputs")
     sim_in, sim_out = st.columns([1.05, 1])
     with sim_in:
+        st.markdown('<div class="zs-panel-h">Policy controls · adjust to recompute</div>', unsafe_allow_html=True)
         covered = st.toggle("Covered for plaque psoriasis", value=True)
         cb1, cb2 = st.columns(2)
         with cb1:
@@ -1230,6 +1302,7 @@ with tab5:
         <div class="zs-obs-text">{' &nbsp;→&nbsp; '.join(why)}</div></div>""",
         unsafe_allow_html=True)
 
+    st.markdown('<div style="height:18px"></div>', unsafe_allow_html=True)
     section_h2("Where to act", "Priorities for the brand and field team.", accent=SEC["method"])
     ic = st.columns(2)
     insights = [
@@ -1343,6 +1416,23 @@ with tab6:
   </div>
 </div>""",
                     unsafe_allow_html=True)
+
+                # At-a-glance status chips — red = restriction present, green = not imposed.
+                chip_defs = [
+                    ("Step therapy", row["Step Therapy"] == "Required"),
+                    ("Biologic step", pd.notna(row["Brand Steps"]) and row["Brand Steps"] >= 1),
+                    ("Specialist", row["Specialist Required"] == "Required"),
+                    ("Quantity limit", row["Quantity Limit"] == "Yes"),
+                    ("Phototherapy", row["Phototherapy Step"] == "Yes"),
+                    ("TB test", row["TB Test"] == "Yes"),
+                ]
+                chips = ""
+                for name, on in chip_defs:
+                    cls = "on" if on else "off"
+                    mark = "Required" if on else "None"
+                    chips += (f'<span class="zs-status {cls}"><span class="dot"></span>'
+                              f'{name}: {mark}</span>')
+                st.markdown(f'<div class="zs-statusrow">{chips}</div>', unsafe_allow_html=True)
 
                 for gname, gcolor, fields in GROUPS:
                     inner = ""
