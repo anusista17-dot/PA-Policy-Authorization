@@ -1,11 +1,10 @@
 """PsO Market Access Intelligence — payer prior-authorization lens.
 
-Consulting-grade Streamlit dashboard built on the best extraction results
-(result__15_.xlsx). All tabs are driven by a single all-brand filter; the
-TREMFYA vs STELARA paired insights remain the analytical centrepiece.
+A board-ready view of how payer policies shape access across the PsO biologic
+basket. One set of global filters (sidebar) drives every tab; the TREMFYA vs
+STELARA head-to-head is the analytical spine.
 """
 from __future__ import annotations
-import io
 import re
 from pathlib import Path
 from typing import Optional, List
@@ -39,7 +38,6 @@ NAVY        = "#1E293B"
 AMBER       = "#D97706"
 AMBER_SOFT  = "#FBBF24"
 
-# Signature brand colours
 TREMFYA_C       = "#047857"
 TREMFYA_LIGHT   = "#10B981"
 STELARA_C       = "#6D28D9"
@@ -47,8 +45,6 @@ STELARA_LIGHT   = "#A78BFA"
 
 FOCUS_BRANDS = ["TREMFYA", "STELARA"]
 
-# Full brand palette — every brand in the corpus gets a distinct colour so the
-# all-brand filter never falls back to monochrome.
 _BRAND_PALETTE = {
     "TREMFYA":   TREMFYA_C,
     "STELARA":   STELARA_C,
@@ -74,8 +70,7 @@ def brand_color(b: str, i: int = 0) -> str:
     return _BRAND_PALETTE.get(str(b).upper(), _FALLBACK_CYCLE[i % len(_FALLBACK_CYCLE)])
 
 
-# Access tiers — aligned to the 0 / 25 / 50 / 75 / 100 framework, anchored to
-# the FDA label (50 = parity). This is the single source of truth for "points".
+# Access tiers — 0 / 25 / 50 / 75 / 100, anchored to the FDA label (50 = parity).
 ACCESS_TIER_ORDER = ["No access", "Restricted", "Parity", "Preferred", "Open"]
 ACCESS_TIER_COLOR = {
     "No access":   "#B91C1C",
@@ -85,30 +80,18 @@ ACCESS_TIER_COLOR = {
     "Open":        "#047857",
     "Unscored":    "#94A3B8",
 }
-ACCESS_TIER_MEANING = {
-    "No access":  "Not covered / excluded for PsO",
-    "Restricted": "More restrictive than the FDA label (e.g. biologic step-through)",
-    "Parity":     "Management mirrors the FDA label",
-    "Preferred":  "Lighter than the FDA label",
-    "Open":       "Effectively unrestricted access",
-}
 
-ARCHETYPE_ORDER = ["Open access", "Standard access", "Tight access"]
-ARCHETYPE_COLOR = {
-    "Open access":     "#16A34A",
-    "Standard access": "#CA8A04",
-    "Tight access":    "#B91C1C",
-}
+# A green→red restrictiveness ramp for "more is worse" count charts.
+RESTRICT_RAMP = ["#16A34A", "#CA8A04", "#EA580C", "#B91C1C", "#7F1D1D", "#450A0A"]
 
-# Section accent palette — used to give each section its own colour block so the
-# layout reads less monochromatic.
+# Section accents — each section gets its own colour block.
 SEC = {
-    "exec":     "#D97706",  # amber
-    "param":    "#2563EB",  # blue
-    "compare":  "#0D9488",  # teal
-    "drivers":  "#DB2777",  # magenta
-    "method":   "#7C3AED",  # violet
-    "explorer": "#0E7490",  # cyan
+    "exec":     "#D97706",
+    "param":    "#2563EB",
+    "compare":  "#0D9488",
+    "drivers":  "#DB2777",
+    "method":   "#7C3AED",
+    "explorer": "#0E7490",
 }
 
 PLOTLY_BASE = dict(
@@ -116,7 +99,7 @@ PLOTLY_BASE = dict(
     plot_bgcolor="rgba(0,0,0,0)",
     font=dict(family="Manrope, -apple-system, BlinkMacSystemFont, sans-serif",
               color=INK, size=13),
-    margin=dict(l=10, r=10, t=20, b=10),
+    margin=dict(l=10, r=10, t=24, b=10),
     xaxis=dict(showgrid=False, linecolor=LINE, ticks="outside",
                tickcolor=LINE, tickfont=dict(color=INK_SOFT, size=11)),
     yaxis=dict(gridcolor="#F0EDE5", linecolor=LINE, ticks="outside",
@@ -149,134 +132,191 @@ html, body, [class*="css"], button, input, select, textarea {{
 .stApp {{ background: {PAPER}; color: {INK}; }}
 #MainMenu, footer {{ visibility: hidden; }}
 header[data-testid="stHeader"] {{ background: transparent; height: 0; }}
-section.main > div.block-container {{ padding-top: 1.5rem; padding-bottom: 4rem; max-width: 1380px; }}
+section.main > div.block-container {{ padding-top: 1.4rem; padding-bottom: 4rem; max-width: 1400px; }}
+
 /* Masthead */
-.zs-masthead {{
-    display: flex; justify-content: space-between; align-items: flex-end;
-    padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid {LINE};
-}}
-.zs-masthead-left .eyebrow {{
-    font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase;
-    color: {AMBER}; font-weight: 700; margin-bottom: 4px;
-}}
-.zs-masthead-left h1 {{
-    font-family: 'Fraunces', Georgia, serif !important;
-    font-weight: 600; font-size: 28px; line-height: 1.15;
-    letter-spacing: -0.015em; color: {INK}; margin: 0 0 4px 0;
-}}
-.zs-masthead-left .deck {{ font-size: 13px; color: {INK_SOFT}; max-width: 760px; line-height: 1.45; }}
-.zs-masthead-right {{
-    text-align: right; font-size: 11px; letter-spacing: 0.06em;
-    text-transform: uppercase; color: {SLATE}; font-weight: 500;
-}}
-.zs-pill-tremfya, .zs-pill-stelara {{
-    display: inline-block; padding: 4px 11px; margin-left: 6px;
-    border-radius: 2px; font-weight: 700; font-size: 10px;
-    letter-spacing: 0.14em; color: #FFFFFF;
-}}
+.zs-masthead {{ display: flex; justify-content: space-between; align-items: flex-end;
+    padding-bottom: 14px; margin-bottom: 12px; border-bottom: 1px solid {LINE}; }}
+.zs-masthead-left .eyebrow {{ font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: {AMBER}; font-weight: 700; margin-bottom: 5px; }}
+.zs-masthead-left h1 {{ font-family: 'Fraunces', Georgia, serif !important; font-weight: 600;
+    font-size: 27px; line-height: 1.15; letter-spacing: -0.015em; color: {INK}; margin: 0 0 5px 0; }}
+.zs-masthead-left .deck {{ font-size: 12.5px; color: {INK_SOFT}; max-width: 720px; line-height: 1.45; }}
+.zs-masthead-right {{ text-align: right; font-size: 11px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: {SLATE}; font-weight: 500; }}
+.zs-pill-tremfya, .zs-pill-stelara {{ display: inline-block; padding: 4px 11px; margin-left: 6px;
+    border-radius: 2px; font-weight: 700; font-size: 10px; letter-spacing: 0.14em; color: #FFFFFF; }}
 .zs-pill-tremfya {{ background: {TREMFYA_C}; }}
 .zs-pill-stelara {{ background: {STELARA_C}; }}
-/* Colour-blocked section heading */
-.zs-sec {{
-    margin: 30px 0 14px 0; padding: 12px 16px; border-radius: 5px;
-    border-left: 5px solid {AMBER};
-    background: linear-gradient(90deg, rgba(217,119,6,0.07) 0%, rgba(217,119,6,0.0) 60%);
-}}
-.zs-sec h2 {{
-    font-family: 'Fraunces', Georgia, serif !important;
-    font-weight: 600; font-size: 20px; line-height: 1.2;
-    letter-spacing: -0.01em; color: {INK}; margin: 0 0 3px 0;
-}}
-.zs-sec .deck {{ font-size: 12.5px; color: {INK_SOFT}; line-height: 1.5; max-width: 880px; }}
-/* Question prompt */
-.zs-question {{
-    font-family: 'Fraunces', Georgia, serif !important;
-    font-size: 15px; font-weight: 500; font-style: italic;
-    color: {INK}; margin: 16px 0 6px 0; line-height: 1.4;
-}}
+
+/* Global-filter context bar */
+.zs-filterbar {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: {CARD}; border: 1px solid {LINE}; border-left: 4px solid {AMBER};
+    border-radius: 5px; padding: 9px 14px; margin-bottom: 8px; font-size: 12px; color: {INK_SOFT}; }}
+.zs-filterbar .lead {{ font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
+    font-weight: 700; color: {AMBER}; }}
+.zs-chip {{ display: inline-flex; align-items: center; gap: 5px; background: {PAPER};
+    border: 1px solid {LINE}; border-radius: 20px; padding: 3px 11px; font-size: 11.5px;
+    font-weight: 600; color: {INK}; }}
+.zs-chip b {{ color: {INK}; }}
+.zs-filterbar .note {{ margin-left: auto; font-size: 10.5px; color: {SLATE}; font-style: italic; }}
+
+/* Scale / units legend */
+.zs-scale {{ display: flex; align-items: center; gap: 0; margin: 4px 0 2px 0;
+    border: 1px solid {LINE}; border-radius: 6px; overflow: hidden; font-size: 11px; }}
+.zs-scale .seg {{ flex: 1; padding: 7px 10px; color: #FFFFFF; font-weight: 600;
+    letter-spacing: 0.02em; text-align: center; }}
+.zs-scale .seg .v {{ font-family: 'Fraunces', serif; font-size: 14px; font-weight: 700; }}
+.zs-scale .seg .l {{ display: block; font-size: 9.5px; opacity: 0.92; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase; }}
+.zs-scale-note {{ font-size: 11px; color: {SLATE}; margin: 4px 0 2px 2px; }}
+.zs-scale-note b {{ color: {INK_SOFT}; }}
+
+/* Section heading */
+.zs-sec {{ margin: 26px 0 12px 0; padding: 11px 16px; border-radius: 5px; border-left: 5px solid {AMBER};
+    background: linear-gradient(90deg, rgba(217,119,6,0.07) 0%, rgba(217,119,6,0.0) 60%); }}
+.zs-sec h2 {{ font-family: 'Fraunces', Georgia, serif !important; font-weight: 600; font-size: 19px;
+    line-height: 1.2; letter-spacing: -0.01em; color: {INK}; margin: 0 0 2px 0; }}
+.zs-sec .deck {{ font-size: 12px; color: {INK_SOFT}; line-height: 1.45; max-width: 880px; }}
+
+/* Chart caption */
+.zs-cap {{ font-size: 12.5px; color: {INK_SOFT}; margin: 12px 0 4px 0; line-height: 1.4; }}
+.zs-cap b {{ color: {INK}; font-weight: 700; }}
+
+/* Headline takeaway */
+.zs-takeaway {{ background: {CARD}; border: 1px solid {LINE}; border-left: 5px solid {AMBER};
+    border-radius: 6px; padding: 14px 18px; margin: 2px 0 6px 0; }}
+.zs-takeaway .k {{ font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+    font-weight: 700; color: {AMBER}; margin-bottom: 5px; }}
+.zs-takeaway .t {{ font-family: 'Fraunces', Georgia, serif !important; font-size: 16.5px;
+    font-weight: 500; line-height: 1.4; color: {INK}; }}
+.zs-takeaway .t b {{ font-weight: 700; }}
+
 /* KPI cards */
-.zs-kpi {{ background: {CARD}; border: 1px solid {LINE}; border-radius: 5px; padding: 14px 16px; height: 100%; position: relative; overflow: hidden; }}
+.zs-kpi {{ background: {CARD}; border: 1px solid {LINE}; border-radius: 5px; padding: 13px 16px;
+    height: 100%; position: relative; overflow: hidden; }}
 .zs-kpi-accent {{ position: absolute; top: 0; left: 0; width: 5px; height: 100%; background: {AMBER}; }}
-.zs-kpi-label {{ font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: {SLATE}; font-weight: 600; margin-bottom: 6px; }}
-.zs-kpi-value {{ font-family: 'Fraunces', Georgia, serif !important; font-size: 30px; font-weight: 600; line-height: 1.05; color: {INK}; letter-spacing: -0.02em; }}
-.zs-kpi-value .unit {{ font-size: 13px; color: {SLATE}; font-family: 'Manrope', sans-serif !important; font-weight: 500; margin-left: 4px; }}
-.zs-kpi-foot {{ font-size: 11.5px; color: {INK_SOFT}; margin-top: 8px; line-height: 1.4; min-height: 1.4em; }}
-/* Implication tiles */
-.zs-obs {{ background: {CARD}; border: 1px solid {LINE}; border-left: 4px solid {AMBER}; border-radius: 5px; padding: 14px 16px; height: 100%; }}
-.zs-obs-tag {{ font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; margin-bottom: 6px; }}
-.zs-obs-text {{ font-size: 13px; color: {INK}; line-height: 1.55; }}
+.zs-kpi-label {{ font-size: 10px; letter-spacing: 0.13em; text-transform: uppercase; color: {SLATE};
+    font-weight: 600; margin-bottom: 6px; }}
+.zs-kpi-value {{ font-family: 'Fraunces', Georgia, serif !important; font-size: 29px; font-weight: 600;
+    line-height: 1.05; color: {INK}; letter-spacing: -0.02em; }}
+.zs-kpi-value .unit {{ font-size: 12px; color: {SLATE}; font-family: 'Manrope', sans-serif !important;
+    font-weight: 500; margin-left: 4px; }}
+.zs-kpi-foot {{ font-size: 11px; color: {INK_SOFT}; margin-top: 7px; line-height: 1.35; min-height: 1.35em; }}
+
+/* Insight tiles */
+.zs-obs {{ background: {CARD}; border: 1px solid {LINE}; border-left: 4px solid {AMBER}; border-radius: 5px;
+    padding: 13px 15px; height: 100%; }}
+.zs-obs-tag {{ font-size: 9.5px; letter-spacing: 0.15em; text-transform: uppercase; font-weight: 700;
+    margin-bottom: 5px; }}
+.zs-obs-text {{ font-size: 12.5px; color: {INK}; line-height: 1.5; }}
 .zs-obs-text b {{ color: {INK}; font-weight: 700; }}
+
 /* Verdict band */
-.zs-verdict {{ color: #FFFFFF; padding: 14px 22px; border-radius: 5px; margin-top: 6px; display: flex; align-items: center; justify-content: space-between; }}
-.zs-verdict .label {{ font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; font-weight: 700; opacity: 0.85; }}
-.zs-verdict .text {{ font-family: 'Fraunces', Georgia, serif !important; font-size: 18px; font-weight: 600; line-height: 1.25; margin-top: 4px; }}
-.zs-verdict .number {{ font-family: 'Fraunces', Georgia, serif !important; font-size: 38px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }}
-.zs-verdict .number .small {{ font-size: 14px; font-weight: 500; opacity: 0.85; }}
+.zs-verdict {{ color: #FFFFFF; padding: 13px 22px; border-radius: 5px; margin-top: 4px; display: flex;
+    align-items: center; justify-content: space-between; }}
+.zs-verdict .label {{ font-size: 10px; letter-spacing: 0.20em; text-transform: uppercase; font-weight: 700;
+    opacity: 0.9; }}
+.zs-verdict .text {{ font-family: 'Fraunces', Georgia, serif !important; font-size: 17px; font-weight: 600;
+    line-height: 1.25; margin-top: 4px; max-width: 760px; }}
+.zs-verdict .number {{ font-family: 'Fraunces', Georgia, serif !important; font-size: 38px; font-weight: 700;
+    line-height: 1; letter-spacing: -0.02em; white-space: nowrap; }}
+.zs-verdict .number .small {{ font-size: 14px; font-weight: 500; opacity: 0.9; }}
+
 /* Scorecard */
-.zs-scorecard {{ background: {CARD}; border: 1px solid {LINE}; border-top: 5px solid {TREMFYA_C}; padding: 16px 18px; border-radius: 5px; }}
-.zs-scorecard h3 {{ font-family: 'Fraunces', Georgia, serif !important; font-size: 21px; font-weight: 600; margin: 0; color: {INK}; letter-spacing: -0.01em; }}
-.zs-scorecard .strap {{ font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }}
-.zs-scorecard table {{ width: 100%; margin-top: 12px; border-collapse: collapse; }}
-.zs-scorecard table td {{ padding: 7px 0; border-bottom: 1px dashed {LINE}; font-size: 12.5px; color: {INK}; }}
+.zs-scorecard {{ background: {CARD}; border: 1px solid {LINE}; border-top: 5px solid {TREMFYA_C};
+    padding: 15px 18px; border-radius: 5px; }}
+.zs-scorecard h3 {{ font-family: 'Fraunces', Georgia, serif !important; font-size: 20px; font-weight: 600;
+    margin: 0; color: {INK}; letter-spacing: -0.01em; }}
+.zs-scorecard .strap {{ font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700;
+    margin-bottom: 3px; }}
+.zs-scorecard table {{ width: 100%; margin-top: 11px; border-collapse: collapse; }}
+.zs-scorecard table td {{ padding: 6px 0; border-bottom: 1px dashed {LINE}; font-size: 12px; color: {INK}; }}
 .zs-scorecard table tr:last-child td {{ border-bottom: none; }}
 .zs-scorecard table td.label {{ color: {INK_SOFT}; }}
-.zs-scorecard table td.value {{ text-align: right; font-weight: 600; color: {INK}; font-variant-numeric: tabular-nums; }}
-/* Archetype card */
-.zs-arch {{ background: {CARD}; border: 1px solid {LINE}; border-top: 5px solid {SLATE}; border-radius: 5px; padding: 14px 16px; height: 100%; }}
-.zs-arch .name {{ font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: {SLATE}; font-weight: 700; margin-bottom: 4px; }}
-.zs-arch .count {{ font-family: 'Fraunces', Georgia, serif !important; font-size: 28px; font-weight: 600; color: {INK}; line-height: 1; }}
-.zs-arch .count .u {{ font-size: 13px; color: {SLATE}; font-family: 'Manrope', sans-serif !important; margin-left: 4px; }}
-.zs-arch .desc {{ font-size: 12px; color: {INK_SOFT}; margin-top: 6px; line-height: 1.4; }}
-.zs-arch .mix {{ margin-top: 10px; padding-top: 10px; border-top: 1px dashed {LINE}; display: flex; gap: 14px; font-size: 12px; }}
-/* Field cards & colour-grouped explorer */
-.zs-fieldgroup {{ border: 1px solid {LINE}; border-radius: 6px; padding: 12px 14px; margin-bottom: 12px; background: {CARD}; }}
-.zs-fieldgroup .gh {{ font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; margin-bottom: 8px; }}
-.zs-field {{ border-radius: 4px; padding: 9px 11px; margin-bottom: 6px; }}
+.zs-scorecard table td.value {{ text-align: right; font-weight: 600; color: {INK};
+    font-variant-numeric: tabular-nums; }}
+
+/* Stage card */
+.zs-arch {{ background: {CARD}; border: 1px solid {LINE}; border-top: 5px solid {SLATE}; border-radius: 5px;
+    padding: 13px 15px; height: 100%; }}
+.zs-arch .name {{ font-size: 11px; letter-spacing: 0.10em; text-transform: uppercase; font-weight: 700;
+    margin-bottom: 4px; }}
+.zs-arch .desc {{ font-size: 12px; color: {INK_SOFT}; margin-top: 4px; line-height: 1.45; }}
+
+/* Explorer field groups */
+.zs-fieldgroup {{ border: 1px solid {LINE}; border-radius: 6px; padding: 11px 14px; margin-bottom: 11px;
+    background: {CARD}; }}
+.zs-fieldgroup .gh {{ font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700;
+    margin-bottom: 7px; }}
+.zs-field {{ border-radius: 4px; padding: 8px 11px; margin-bottom: 5px; }}
 .zs-field:last-child {{ margin-bottom: 0; }}
-.zs-field-label {{ font-size: 10px; letter-spacing: 0.10em; text-transform: uppercase; color: {SLATE}; font-weight: 600; margin-bottom: 2px; }}
-.zs-field-value {{ font-size: 13px; color: {INK}; line-height: 1.45; font-weight: 500; }}
-/* Tier ladder (methodology) */
-.zs-rung {{ display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-radius: 6px; margin-bottom: 7px; color: #FFFFFF; }}
-.zs-rung .pts {{ font-family: 'Fraunces', serif !important; font-size: 24px; font-weight: 700; width: 56px; }}
-.zs-rung .nm {{ font-weight: 700; font-size: 13px; letter-spacing: 0.04em; width: 110px; }}
-.zs-rung .ds {{ font-size: 12.5px; opacity: 0.95; }}
+.zs-field-label {{ font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: {SLATE};
+    font-weight: 600; margin-bottom: 2px; }}
+.zs-field-value {{ font-size: 12.5px; color: {INK}; line-height: 1.4; font-weight: 500; }}
+
+/* Tier ladder */
+.zs-rung {{ display: flex; align-items: center; gap: 14px; padding: 9px 14px; border-radius: 6px;
+    margin-bottom: 6px; color: #FFFFFF; }}
+.zs-rung .pts {{ font-family: 'Fraunces', serif !important; font-size: 22px; font-weight: 700; width: 52px; }}
+.zs-rung .nm {{ font-weight: 700; font-size: 12.5px; letter-spacing: 0.04em; width: 104px; }}
+.zs-rung .ds {{ font-size: 12px; opacity: 0.96; }}
+
+/* In-tab view-control strip */
+.zs-ctrl-hint {{ font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700;
+    color: {SLATE}; margin-bottom: 2px; }}
+
 /* Tabs */
-div[data-baseweb="tab-list"] {{ gap: 0; border-bottom: 1px solid {LINE}; background: transparent; padding-left: 0; flex-wrap: wrap; }}
-button[data-baseweb="tab"] {{
-    font-family: 'Manrope', sans-serif !important; font-weight: 600 !important;
-    font-size: 13px !important; letter-spacing: 0.02em !important;
-    color: {SLATE} !important; background: transparent !important;
-    padding: 12px 20px !important; border-radius: 0 !important;
-    border-bottom: 2px solid transparent !important; margin-right: 2px;
-}}
+div[data-baseweb="tab-list"] {{ gap: 0; border-bottom: 1px solid {LINE}; background: transparent;
+    padding-left: 0; flex-wrap: wrap; }}
+button[data-baseweb="tab"] {{ font-family: 'Manrope', sans-serif !important; font-weight: 600 !important;
+    font-size: 13px !important; letter-spacing: 0.02em !important; color: {SLATE} !important;
+    background: transparent !important; padding: 12px 20px !important; border-radius: 0 !important;
+    border-bottom: 2px solid transparent !important; margin-right: 2px; }}
 button[data-baseweb="tab"]:hover {{ color: {INK} !important; background: rgba(217, 119, 6, 0.04) !important; }}
 button[data-baseweb="tab"][aria-selected="true"] {{ color: {INK} !important; border-bottom-color: {AMBER} !important; }}
-div[data-baseweb="tab-panel"] {{ padding-top: 16px; }}
+div[data-baseweb="tab-panel"] {{ padding-top: 14px; }}
+
 /* Sidebar */
 section[data-testid="stSidebar"] {{ background: linear-gradient(180deg, {NAVY} 0%, #0F172A 100%); }}
 section[data-testid="stSidebar"] * {{ color: #E5E7EB !important; }}
-section[data-testid="stSidebar"] label {{ color: #FCD34D !important; font-size: 10.5px !important; letter-spacing: 0.16em !important; text-transform: uppercase !important; font-weight: 700 !important; }}
-.zs-side-brand {{ padding-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 18px; }}
-.zs-side-brand .eyebrow {{ font-size: 10px; letter-spacing: 0.24em; text-transform: uppercase; color: {AMBER_SOFT} !important; font-weight: 700; margin-bottom: 4px; }}
-.zs-side-brand .title {{ font-family: 'Fraunces', Georgia, serif !important; font-size: 22px; font-weight: 600; color: #FFFFFF !important; line-height: 1.2; }}
-.zs-side-brand .strap {{ font-size: 11.5px; color: rgba(229,231,235,0.65) !important; line-height: 1.4; margin-top: 6px; }}
-section[data-testid="stSidebar"] div[data-baseweb="select"] > div {{ background-color: rgba(255,255,255,0.06) !important; border-color: rgba(255,255,255,0.15) !important; color: #FFFFFF !important; }}
+section[data-testid="stSidebar"] label {{ color: #FCD34D !important; font-size: 10px !important;
+    letter-spacing: 0.14em !important; text-transform: uppercase !important; font-weight: 700 !important; }}
+.zs-side-brand {{ padding-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 14px; }}
+.zs-side-brand .eyebrow {{ font-size: 9.5px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: {AMBER_SOFT} !important; font-weight: 700; margin-bottom: 4px; }}
+.zs-side-brand .title {{ font-family: 'Fraunces', Georgia, serif !important; font-size: 21px; font-weight: 600;
+    color: #FFFFFF !important; line-height: 1.2; }}
+.zs-side-brand .strap {{ font-size: 11px; color: rgba(229,231,235,0.65) !important; line-height: 1.4;
+    margin-top: 5px; }}
+.zs-side-scope {{ background: rgba(217,119,6,0.16); border: 1px solid rgba(251,191,36,0.35);
+    border-radius: 5px; padding: 8px 11px; margin-bottom: 14px; }}
+.zs-side-scope .h {{ font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700;
+    color: {AMBER_SOFT} !important; margin-bottom: 2px; }}
+.zs-side-scope .b {{ font-size: 11px; color: rgba(229,231,235,0.85) !important; line-height: 1.4; }}
+section[data-testid="stSidebar"] div[data-baseweb="select"] > div {{ background-color: rgba(255,255,255,0.06) !important;
+    border-color: rgba(255,255,255,0.15) !important; color: #FFFFFF !important; }}
 section[data-testid="stSidebar"] [data-baseweb="tag"] {{ background-color: {AMBER} !important; }}
 section[data-testid="stSidebar"] [data-baseweb="tag"] span {{ color: {NAVY} !important; font-weight: 700; }}
 section[data-testid="stSidebar"] .stSlider [data-baseweb="slider"] > div > div {{ background-color: {AMBER_SOFT} !important; }}
-.zs-side-footer {{ margin-top: 22px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 11px; color: rgba(229,231,235,0.55) !important; line-height: 1.5; }}
-/* Dataframe / expander */
+.zs-side-footer {{ margin-top: 18px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);
+    font-size: 10.5px; color: rgba(229,231,235,0.55) !important; line-height: 1.5; }}
+
 [data-testid="stDataFrame"] {{ border: 1px solid {LINE}; border-radius: 3px; background: {CARD}; }}
-.streamlit-expanderHeader {{ font-family: 'Manrope', sans-serif !important; font-weight: 600 !important; color: {INK} !important; background: {CARD} !important; border: 1px solid {LINE} !important; border-radius: 3px !important; }}
+.streamlit-expanderHeader {{ font-family: 'Manrope', sans-serif !important; font-weight: 600 !important;
+    color: {INK} !important; background: {CARD} !important; border: 1px solid {LINE} !important;
+    border-radius: 3px !important; }}
 .js-plotly-plot .plotly .modebar {{ display: none !important; }}
-.zs-footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid {LINE}; font-size: 11px; letter-spacing: 0.10em; text-transform: uppercase; color: {SLATE}; display: flex; justify-content: space-between; }}
+.zs-footer {{ margin-top: 48px; padding-top: 14px; border-top: 1px solid {LINE}; font-size: 10.5px;
+    letter-spacing: 0.10em; text-transform: uppercase; color: {SLATE}; display: flex;
+    justify-content: space-between; }}
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
 # ============================================================================
-#  DATA LOADING  (best-results file; no uploader)
+#  DATA LOADING
 # ============================================================================
 DATA_CANDIDATES = [
     "result__15_.xlsx", "result_15.xlsx", "result.xlsx",
@@ -295,7 +335,6 @@ def find_local_file() -> Optional[str]:
 
 @st.cache_data(show_spinner=False)
 def load_results(path: str) -> pd.DataFrame:
-    # Read the first sheet that contains an "Access Score" column.
     xls = pd.ExcelFile(path, engine="openpyxl")
     for sh in xls.sheet_names:
         d = pd.read_excel(xls, sheet_name=sh)
@@ -343,7 +382,6 @@ def _has_text(v) -> bool:
 
 
 def access_tier(score) -> str:
-    """Map a 0-100 access score onto the FDA-anchored 5-band ladder."""
     if pd.isna(score):
         return "Unscored"
     s = float(score)
@@ -421,13 +459,6 @@ RESTRICTION_DEFS = [
 ]
 
 
-def restriction_count(df: pd.DataFrame) -> pd.Series:
-    s = pd.Series(0, index=df.index)
-    for col, val, _ in RESTRICTION_DEFS:
-        s = s + (df[col] == val).astype(int)
-    return s
-
-
 def restriction_share(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     n = len(df)
@@ -451,50 +482,35 @@ def restriction_by_brand(df: pd.DataFrame, brands: List[str]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def archetype_label(count):
-    if pd.isna(count):
-        return "Unknown"
-    if count <= 2:
-        return "Open access"
-    if count <= 4:
-        return "Standard access"
-    return "Tight access"
-
-
 def simulate_access_score(covered, b_steps, g_steps, photo, specialist,
                           qty_limit, reauth_months, init_months, step_known=True):
-    """Replica of the production binding-constraint scorer — used by the live
-    simulator in the Methodology tab. Returns (score, tier, rationale list)."""
     why = []
     if not covered:
         return 0, "No access", ["Coverage gate: not covered for PsO → 0"]
-    # Stage 2 — step-therapy anchor (biologic step-through dominates)
     if b_steps >= 2:
-        anchor = 25; why.append(f"Anchor: {b_steps} biologic steps (beyond FDA label) → 25")
+        anchor = 25; why.append(f"Anchor: {b_steps} biologic steps (beyond label) → 25")
     elif b_steps == 1:
-        anchor = 25; why.append("Anchor: 1 biologic step (beyond FDA label) → 25 (hard floor)")
+        anchor = 25; why.append("Anchor: 1 biologic step (beyond label) → 25 floor")
     elif g_steps >= 1 or photo:
-        anchor = 50; why.append(f"Anchor: label-consistent step (generic={g_steps}{', photo' if photo else ''}) → 50 parity")
+        anchor = 50; why.append(f"Anchor: label-consistent step → 50 parity")
     elif step_known:
-        anchor = 75; why.append("Anchor: criteria reviewed, no step therapy → 75 (provisional)")
+        anchor = 75; why.append("Anchor: criteria reviewed, no step → 75")
     else:
-        anchor = 50; why.append("Anchor: step therapy unknown → 50 (unknown ≠ open)")
-    # Stage 3 — secondary burden
+        anchor = 50; why.append("Anchor: step unknown → 50")
     burden = 0; notes = []
     if specialist:
         burden += 1; notes.append("specialist")
     if qty_limit:
-        burden += 1; notes.append("quantity-limit")
+        burden += 1; notes.append("quantity limit")
     if reauth_months and reauth_months <= 6:
-        burden += 1; notes.append("short reauth ≤6mo")
+        burden += 1; notes.append("short reauth")
     if init_months and init_months < 3:
-        burden += 1; notes.append("short initial <3mo")
+        burden += 1; notes.append("short initial")
     if g_steps >= 2:
         burden += (g_steps - 1); notes.append(f"{g_steps} conventional steps")
     if photo and (b_steps > 0 or g_steps > 0):
-        burden += 1; notes.append("phototherapy as extra step")
+        burden += 1; notes.append("added phototherapy")
     why.append(f"Burden = {burden} ({', '.join(notes) if notes else 'none'})")
-    # Final adjustment
     if anchor == 25:
         score = 25
     elif anchor == 50:
@@ -503,57 +519,72 @@ def simulate_access_score(covered, b_steps, g_steps, photo, specialist,
         score = 100 if burden == 0 else (50 if burden >= 2 else 75)
     else:
         score = anchor
-    why.append(f"→ Final score {score}")
+    why.append(f"Final score {score}")
     return score, access_tier(score), why
 
 
 def kpi_card(col, label, value, foot="", accent=AMBER):
     col.markdown(
-        f"""
-<div class="zs-kpi">
-  <div class="zs-kpi-accent" style="background:{accent};"></div>
+        f"""<div class="zs-kpi"><div class="zs-kpi-accent" style="background:{accent};"></div>
   <div class="zs-kpi-label">{label}</div>
   <div class="zs-kpi-value">{value}</div>
-  <div class="zs-kpi-foot">{foot}</div>
-</div>""",
+  <div class="zs-kpi-foot">{foot}</div></div>""",
         unsafe_allow_html=True,
     )
 
 
-def implication_tile(col, tag, html, accent=AMBER):
+def insight_tile(col, tag, html, accent=AMBER):
     col.markdown(
-        f"""
-<div class="zs-obs" style="border-left-color:{accent};">
+        f"""<div class="zs-obs" style="border-left-color:{accent};">
   <div class="zs-obs-tag" style="color:{accent};">{tag}</div>
-  <div class="zs-obs-text">{html}</div>
-</div>""",
+  <div class="zs-obs-text">{html}</div></div>""",
         unsafe_allow_html=True,
     )
 
 
 def section_h2(title, deck="", accent=AMBER):
-    tint = accent
     st.markdown(
-        f"""
-<div class="zs-sec" style="border-left-color:{tint};
-     background: linear-gradient(90deg, {tint}14 0%, {tint}00 60%);">
+        f"""<div class="zs-sec" style="border-left-color:{accent};
+     background: linear-gradient(90deg, {accent}14 0%, {accent}00 60%);">
   <h2>{title}</h2>
-  {f'<div class="deck">{deck}</div>' if deck else ''}
-</div>""",
+  {f'<div class="deck">{deck}</div>' if deck else ''}</div>""",
         unsafe_allow_html=True,
     )
 
 
-def question(text):
-    st.markdown(f'<div class="zs-question">{text}</div>', unsafe_allow_html=True)
+def chart_caption(html):
+    st.markdown(f'<div class="zs-cap">{html}</div>', unsafe_allow_html=True)
+
+
+def control_hint(text):
+    st.markdown(f'<div class="zs-ctrl-hint">{text}</div>', unsafe_allow_html=True)
+
+
+def score_scale_strip():
+    segs = [
+        ("0", "No access", ACCESS_TIER_COLOR["No access"]),
+        ("25", "Restricted", ACCESS_TIER_COLOR["Restricted"]),
+        ("50", "FDA parity", ACCESS_TIER_COLOR["Parity"]),
+        ("75", "Preferred", ACCESS_TIER_COLOR["Preferred"]),
+        ("100", "Open", ACCESS_TIER_COLOR["Open"]),
+    ]
+    body = "".join(
+        f'<div class="seg" style="background:{c};"><span class="v">{v}</span>'
+        f'<span class="l">{l}</span></div>' for v, l, c in segs)
+    st.markdown(f'<div class="zs-scale">{body}</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="zs-scale-note"><b>Access Score (pts)</b> — a 0–100 index of how '
+        'restrictive a policy is versus the FDA label. Higher = easier access. '
+        '<b>50 = parity</b> with the label; below 50 = payer-added barriers; above 50 = lighter than label.</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ============================================================================
 #  INGESTION
 # ============================================================================
 st.sidebar.markdown(
-    """
-<div class="zs-side-brand">
+    """<div class="zs-side-brand">
   <div class="eyebrow">ZS · Market Access</div>
   <div class="title">PsO Policy Lens</div>
   <div class="strap">Prior-authorization intelligence across the PsO biologic basket.</div>
@@ -563,10 +594,7 @@ st.sidebar.markdown(
 
 local_path = find_local_file()
 if local_path is None:
-    st.error(
-        "Results workbook not found. Place **result__15_.xlsx** next to this app "
-        "(same folder) and reload. No upload step is required."
-    )
+    st.error("Results workbook not found. Place **result__15_.xlsx** next to this app and reload.")
     st.stop()
 
 try:
@@ -580,76 +608,90 @@ except Exception as e:
 
 df_all = prepare(df_raw)
 ALL_BRANDS = sorted(df_all["Brand"].unique().tolist(),
-                    key=lambda b: (b not in FOCUS_BRANDS, b))  # focus brands first
+                    key=lambda b: (b not in FOCUS_BRANDS, b))
 
 # ============================================================================
-#  SIDEBAR FILTERS  (brand filter drives every tab)
+#  SIDEBAR — GLOBAL FILTERS (drive every tab)
 # ============================================================================
-st.sidebar.markdown("**Brand filter**")
+st.sidebar.markdown(
+    """<div class="zs-side-scope">
+  <div class="h">Global filters</div>
+  <div class="b">Every selection below applies to all six tabs.</div>
+</div>""",
+    unsafe_allow_html=True,
+)
+
+st.sidebar.markdown("**Brands in view**")
 default_brands = [b for b in FOCUS_BRANDS if b in ALL_BRANDS] or ALL_BRANDS[:1]
 selected_brands = st.sidebar.multiselect(
-    "Brand filter",
-    options=ALL_BRANDS,
-    default=default_brands,
+    "Brands in view", options=ALL_BRANDS, default=default_brands,
     label_visibility="collapsed",
-    help="Pick any brands in the corpus. Headline insights focus on TREMFYA vs STELARA; "
-         "all charts, the parameter explorer and the policy explorer respond to this filter.",
+    help="The whole dashboard responds to this. Headline numbers focus on TREMFYA vs STELARA.",
 )
 if not selected_brands:
     selected_brands = default_brands
 
-st.sidebar.markdown("**Access score range**")
-score_lo = int(np.nanmin(df_all["Access Score"])) if df_all["Access Score"].notna().any() else 0
-score_hi = int(np.nanmax(df_all["Access Score"])) if df_all["Access Score"].notna().any() else 100
+st.sidebar.markdown("**Access-score range (pts)**")
 score_range = st.sidebar.slider(
-    "Access score range", min_value=0, max_value=100,
-    value=(0, 100), step=25, label_visibility="collapsed",
-)
-
-st.sidebar.markdown("**Filter by access tier**")
-tier_options = [t for t in ACCESS_TIER_ORDER if t in df_all["Access Tier"].unique()]
-selected_tiers = st.sidebar.multiselect(
-    "Filter by access tier", options=tier_options, default=tier_options,
+    "Access-score range", min_value=0, max_value=100, value=(0, 100), step=25,
     label_visibility="collapsed",
 )
 
-# Filtered frames
+st.sidebar.markdown("**Access tiers**")
+tier_options = [t for t in ACCESS_TIER_ORDER if t in df_all["Access Tier"].unique()]
+selected_tiers = st.sidebar.multiselect(
+    "Access tiers", options=tier_options, default=tier_options,
+    label_visibility="collapsed",
+)
+
 base_mask = (df_all["Access Score"].between(score_range[0], score_range[1])
              & df_all["Access Tier"].isin(selected_tiers))
-df = df_all[base_mask & df_all["Brand"].isin(selected_brands)].copy()          # brand-filtered
+df = df_all[base_mask & df_all["Brand"].isin(selected_brands)].copy()
 focus_present = [b for b in FOCUS_BRANDS if b in df_all["Brand"].unique()]
-df_focus = df_all[base_mask & df_all["Brand"].isin(focus_present)].copy()       # TREMFYA/STELARA
+df_focus = df_all[base_mask & df_all["Brand"].isin(focus_present)].copy()
 
 st.sidebar.markdown(
-    f"""
-<div class="zs-side-footer">
-Corpus: <b>{df_all['Policy ID'].nunique()}</b> payer policies · <b>{len(df_all)}</b> brand-policy
-observations across <b>{len(ALL_BRANDS)}</b> PsO brands.<br><br>
-Active filter: <b>{len(selected_brands)}</b> brand(s) · <b>{len(df)}</b> observations in view.
+    f"""<div class="zs-side-footer">
+<b>{df_all['Policy ID'].nunique()}</b> payer policies · <b>{len(df_all)}</b> brand-policy records ·
+<b>{len(ALL_BRANDS)}</b> brands.<br><br>
+In view: <b>{len(selected_brands)}</b> brand(s) · <b>{len(df)}</b> records.
 </div>""",
     unsafe_allow_html=True,
 )
 
 if df.empty:
-    st.warning("No rows match the current filters. Loosen them from the sidebar to continue.")
+    st.warning("No records match the current filters. Loosen them in the sidebar to continue.")
     st.stop()
 
 # ============================================================================
 #  MASTHEAD
 # ============================================================================
 st.markdown(
-    f"""
-<div class="zs-masthead">
+    f"""<div class="zs-masthead">
   <div class="zs-masthead-left">
     <div class="eyebrow">Plaque Psoriasis · Payer Access Intelligence</div>
     <h1>How payer policies shape access across the PsO biologic basket</h1>
-    <div class="deck">A consulting view of prior-authorization signals from {df_all['Policy ID'].nunique()} payer
-    policies — quantifying where access opens, where it tightens, and the payer behaviours driving the difference.
-    Headline comparison focuses on TREMFYA vs STELARA; the brand filter unlocks the full basket.</div>
+    <div class="deck">Prior-authorization signals from {df_all['Policy ID'].nunique()} payer policies —
+    where access opens, where it tightens, and what drives the gap. TREMFYA vs STELARA in focus.</div>
   </div>
   <div class="zs-masthead-right">
     Focus pair<span class="zs-pill-tremfya">TREMFYA</span><span class="zs-pill-stelara">STELARA</span>
   </div>
+</div>""",
+    unsafe_allow_html=True,
+)
+
+# Global-filter context bar — makes filter scope unmistakable on every page.
+brand_label = ", ".join(selected_brands) if len(selected_brands) <= 4 else f"{len(selected_brands)} brands"
+tier_label = "All tiers" if len(selected_tiers) == len(tier_options) else ", ".join(selected_tiers)
+st.markdown(
+    f"""<div class="zs-filterbar">
+  <span class="lead">Filters in effect</span>
+  <span class="zs-chip">Brands · <b>{brand_label}</b></span>
+  <span class="zs-chip">Score · <b>{score_range[0]}–{score_range[1]} pts</b></span>
+  <span class="zs-chip">Tiers · <b>{tier_label}</b></span>
+  <span class="zs-chip"><b>{len(df)}</b> records in view</span>
+  <span class="note">Set in the sidebar · applies to all tabs</span>
 </div>""",
     unsafe_allow_html=True,
 )
@@ -662,7 +704,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Parameter Analysis",
     "Brand Comparison",
     "Access Drivers",
-    "Methodology & Insights",
+    "Methodology",
     "Policy Explorer",
 ])
 
@@ -676,32 +718,35 @@ with tab1:
     s_mean = sdf["Access Score"].mean() if len(sdf) else np.nan
     diff = t_mean - s_mean if not (np.isnan(t_mean) or np.isnan(s_mean)) else np.nan
 
+    score_scale_strip()
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+
     c1, c2, c3, c4 = st.columns(4)
-    kpi_card(c1, "Policies analysed", f"{df['Policy ID'].nunique()}",
-             foot=f"{len(df)} observations · {len(selected_brands)} brand(s) in view", accent=SLATE)
-    kpi_card(c2, "TREMFYA · mean access", f"{t_mean:.1f}" if not np.isnan(t_mean) else "—",
-             foot=f"{len(tdf)} policies covering TREMFYA", accent=TREMFYA_C)
-    kpi_card(c3, "STELARA · mean access", f"{s_mean:.1f}" if not np.isnan(s_mean) else "—",
-             foot=f"{len(sdf)} policies covering STELARA", accent=STELARA_C)
+    kpi_card(c1, "Policies in view", f"{df['Policy ID'].nunique()}",
+             foot=f"{len(df)} records · {len(selected_brands)} brand(s)", accent=SLATE)
+    kpi_card(c2, "TREMFYA mean access", f"{t_mean:.0f}<span class='unit'>pts</span>" if not np.isnan(t_mean) else "—",
+             foot=f"across {len(tdf)} TREMFYA policies", accent=TREMFYA_C)
+    kpi_card(c3, "STELARA mean access", f"{s_mean:.0f}<span class='unit'>pts</span>" if not np.isnan(s_mean) else "—",
+             foot=f"across {len(sdf)} STELARA policies", accent=STELARA_C)
     if not np.isnan(diff):
         leader = "TREMFYA" if diff > 0 else ("STELARA" if diff < 0 else "Parity")
         sign = "+" if diff > 0 else ""
         acc = TREMFYA_C if diff > 0 else (STELARA_C if diff < 0 else SLATE)
-        kpi_card(c4, "Access differential", f"{sign}{diff:.1f}<span class='unit'>pts</span>",
-                 foot=f"{leader} advantage on the 0–100 access scale", accent=acc)
+        kpi_card(c4, "Access gap", f"{sign}{diff:.0f}<span class='unit'>pts</span>",
+                 foot=f"{leader} ahead on mean access", accent=acc)
     else:
-        kpi_card(c4, "Access differential", "—", "", accent=SLATE)
+        kpi_card(c4, "Access gap", "—", "", accent=SLATE)
 
     if not np.isnan(diff):
         if abs(diff) < 1:
             grad = f"linear-gradient(90deg,{SLATE} 0%,#94A3B8 100%)"
-            lbl, txt, num = "Access verdict", "TREMFYA and STELARA face broadly similar payer access conditions across the corpus.", "≈ Parity"
+            lbl, txt, num = "Verdict · parity", "TREMFYA and STELARA face broadly equal payer access.", "≈ 0<span class='small'> pts</span>"
         elif diff > 0:
             grad = f"linear-gradient(90deg,{TREMFYA_C} 0%,{TREMFYA_LIGHT} 100%)"
-            lbl, txt, num = "Access leader · TREMFYA", "TREMFYA holds a measurable corpus-mean access advantage over STELARA.", f"+{diff:.1f}<span class='small'> pts</span>"
+            lbl, txt, num = "Access leader · TREMFYA", "TREMFYA holds the mean-access advantage across the corpus.", f"+{diff:.0f}<span class='small'> pts</span>"
         else:
             grad = f"linear-gradient(90deg,{STELARA_C} 0%,{STELARA_LIGHT} 100%)"
-            lbl, txt, num = "Access leader · STELARA", "STELARA holds a measurable corpus-mean access advantage over TREMFYA.", f"+{abs(diff):.1f}<span class='small'> pts</span>"
+            lbl, txt, num = "Access leader · STELARA", "STELARA holds the mean-access advantage across the corpus.", f"+{abs(diff):.0f}<span class='small'> pts</span>"
         st.markdown(
             f"""<div class="zs-verdict" style="background:{grad};">
   <div><div class="label">{lbl}</div><div class="text">{txt}</div></div>
@@ -709,11 +754,26 @@ with tab1:
             unsafe_allow_html=True,
         )
 
-    section_h2("Access Overview",
-               "Distribution of access scores for the brands in view. Position of the mass tells "
-               "the story — clustering near 25 signals payer-imposed step-edits beyond the FDA label.",
-               accent=SEC["exec"])
-    question("Where does each selected brand sit on the 0–100 access spectrum?")
+    # Headline takeaway — the single "so what".
+    rs_all = restriction_share(df).sort_values("Share", ascending=False)
+    top_lever = rs_all.iloc[0] if len(rs_all) else None
+    t_range = (tdf["Access Score"].max() - tdf["Access Score"].min()) if len(tdf) else 0
+    s_range = (sdf["Access Score"].max() - sdf["Access Score"].min()) if len(sdf) else 0
+    spread = max(t_range, s_range)
+    if top_lever is not None:
+        st.markdown(
+            f"""<div class="zs-takeaway">
+      <div class="k">Headline</div>
+      <div class="t">Access is set by the <b>payer, not the molecule</b>: scores swing up to
+      <b>{spread:.0f} pts</b> policy-to-policy, and <b>{top_lever['Restriction'].lower()}</b> is the
+      control behind it — present in <b>{top_lever['Share']*100:.0f}%</b> of policies in view.</div>
+    </div>""",
+            unsafe_allow_html=True,
+        )
+
+    section_h2("Access spectrum", accent=SEC["exec"])
+    chart_caption("Where each brand's policies land on the 0–100 access scale. "
+                  "Mass near <b>25</b> = biologic step-through beyond the FDA label; mass near <b>50</b> = label parity.")
     fig_dist = go.Figure()
     plot_brands = selected_brands if len(selected_brands) <= 6 else (focus_present or selected_brands[:6])
     for i, b in enumerate(plot_brands):
@@ -723,52 +783,50 @@ with tab1:
         fig_dist.add_trace(go.Violin(
             x=bsub["Access Score"], y=[b] * len(bsub), name=b, orientation="h",
             side="positive", line_color=brand_color(b, i), fillcolor=brand_color(b, i),
-            opacity=0.55, box_visible=True, meanline_visible=True, points="all",
+            opacity=0.5, box_visible=True, meanline_visible=True, points="all",
             pointpos=-0.6, jitter=0.25,
             marker=dict(color=brand_color(b, i), size=6, opacity=0.85,
                         line=dict(color="#FFFFFF", width=0.5)),
-            hoveron="points", hovertemplate=f"<b>{b}</b><br>Score: %{{x}}<extra></extra>",
+            hoveron="points", hovertemplate=f"<b>{b}</b><br>%{{x}} pts<extra></extra>",
             scalemode="count", spanmode="hard",
         ))
-    apply_layout(fig_dist, height=max(300, 95 * len(plot_brands) + 80),
-                 xaxis=dict(range=[-5, 105], title="Access Score (0 = no access · 50 = FDA parity · 100 = open)",
-                            title_font=dict(size=12, color=INK_SOFT)),
+    apply_layout(fig_dist, height=max(300, 92 * len(plot_brands) + 80),
+                 xaxis=dict(range=[-5, 105], title="Access Score (pts)",
+                            tickvals=[0, 25, 50, 75, 100], title_font=dict(size=12, color=INK_SOFT)),
                  yaxis=dict(title="", showgrid=False), showlegend=False, violinmode="group")
+    # FDA-parity reference line
+    fig_dist.add_vline(x=50, line=dict(color=ACCESS_TIER_COLOR["Parity"], width=1.2, dash="dot"))
+    fig_dist.add_annotation(x=50, y=1.0, yref="paper", text="FDA parity",
+                            showarrow=False, font=dict(size=10, color=ACCESS_TIER_COLOR["Parity"]),
+                            yshift=8)
     st.plotly_chart(fig_dist, use_container_width=True, config={"displayModeBar": False})
 
-    section_h2("Consulting Implications", accent=SEC["exec"])
-    rs = restriction_share(df_focus).sort_values("Share", ascending=False)
-    top_restr = rs.iloc[0] if len(rs) else None
-    t_range = (tdf["Access Score"].max() - tdf["Access Score"].min()) if len(tdf) else 0
-    s_range = (sdf["Access Score"].max() - sdf["Access Score"].min()) if len(sdf) else 0
+    section_h2("What this means", accent=SEC["exec"])
     ic = st.columns(3)
     if not np.isnan(diff):
         leader = "TREMFYA" if diff > 0 else "STELARA"
+        trail = "STELARA" if diff > 0 else "TREMFYA"
         acc = TREMFYA_C if diff > 0 else STELARA_C
-        implication_tile(ic[0], "Brand positioning",
-                         f"<b>{leader} carries a {abs(diff):.1f}-point access edge</b> on a corpus-mean basis. "
-                         f"The gap is directionally consistent and shapes relative pull-through potential — "
-                         f"the trailing brand should prioritise formulary-access wins at its weakest accounts.",
-                         accent=acc)
-    implication_tile(ic[1], "Payer mix vs brand choice",
-                     f"Within-brand access swings by up to <b>{max(t_range, s_range):.0f} points</b> from the "
-                     f"tightest to the most open policy. <b>Payer selection moves access more than brand selection</b> — "
-                     f"field-team targeting should be account-led, not brand-led.",
+        insight_tile(ic[0], "Brand positioning",
+                     f"<b>{leader} leads by {abs(diff):.0f} pts</b> on mean access. "
+                     f"Defend {leader}'s lead; close {trail}'s gap at its weakest accounts.",
+                     accent=acc)
+    insight_tile(ic[1], "Payer vs brand",
+                 f"Access varies up to <b>{spread:.0f} pts</b> across payers within a single brand. "
+                 f"<b>Target by account, not by brand.</b>",
+                 accent=SEC["exec"])
+    if top_lever is not None:
+        insight_tile(ic[2], "Highest-leverage control",
+                     f"<b>{top_lever['Restriction']}</b> appears in <b>{top_lever['Share']*100:.0f}%</b> "
+                     f"of policies — the single biggest negotiation lever.",
                      accent=SEC["exec"])
-    if top_restr is not None:
-        implication_tile(ic[2], "Dominant UM lever",
-                         f"<b>{top_restr['Restriction']}</b> is the most prevalent utilization-management lever, "
-                         f"applied in <b>{top_restr['Share']*100:.0f}%</b> of policies. Concentrating payer "
-                         f"negotiation on this single lever offers the largest addressable-population upside.",
-                         accent=SEC["exec"])
 
 # ----------------------------------------------------------------------------
-#  TAB 2 — PARAMETER ANALYSIS  (parameter-led; all brands selectable)
+#  TAB 2 — PARAMETER ANALYSIS
 # ----------------------------------------------------------------------------
 with tab2:
-    section_h2("Parameter Analysis",
-               "Lead with the parameter, not the brand. Pick any extracted PA parameter and see how it is "
-               "distributed across the corpus and how it differs across the brands in view.",
+    section_h2("Parameter analysis",
+               "Pick any extracted PA parameter to see its corpus-wide distribution and how it splits by brand.",
                accent=SEC["param"])
 
     PARAM_GROUPS = {
@@ -779,67 +837,76 @@ with tab2:
         ],
         "Step therapy & pre-treatment": [
             ("Step Therapy", "yesno", "Step therapy documented"),
-            ("Brand Steps", "numeric", "Number of brand/biologic steps"),
-            ("Generic Steps", "numeric", "Number of generic/oral steps"),
+            ("Brand Steps", "numeric", "Biologic steps required"),
+            ("Generic Steps", "numeric", "Conventional/oral steps required"),
             ("Phototherapy Step", "yesno", "Phototherapy step required"),
         ],
         "Utilization management": [
             ("Quantity Limit", "yesno", "Quantity limit imposed"),
-            ("Initial Auth (months)", "numeric", "Initial authorization duration"),
-            ("Reauth (months)", "numeric", "Reauthorization duration"),
+            ("Initial Auth (months)", "numeric", "Initial authorization (months)"),
+            ("Reauth (months)", "numeric", "Reauthorization (months)"),
         ],
     }
     PARAM_INSIGHTS = {
-        "Age Criterion": "Age thresholds size the eligible population. 'FDA approved age' defaults to the label; explicit thresholds (≥6, ≥18) carve out cohorts and matter for pediatric positioning.",
-        "TB Test": "TB screening is the clinical norm before any biologic — it is a low-friction gate, not a true access barrier, and should not be over-weighted in access scoring.",
-        "Specialist Required": "Dermatologist-only prescribing narrows the writer base and adds referral friction; 'or in consultation with' language softens the constraint materially.",
-        "Step Therapy": "Step therapy is the single most material access lever and is required in the majority of policies — the primary battleground for formulary access teams.",
-        "Brand Steps": "Biologic step-through is the strongest predictor of delay and abandonment. Each required prior biologic is a payer-imposed hurdle beyond the FDA label.",
-        "Generic Steps": "Conventional/oral systemics (methotrexate, cyclosporine, acitretin) sit earlier in the ladder and are broadly label-consistent — they depress access far less than biologic step-edits.",
-        "Phototherapy Step": "Mandatory phototherapy is uncommon but consequential — it requires clinic-administered UVB/PUVA access that many patients cannot reach.",
-        "Quantity Limit": "Quantity limits cap units per fill; below-label limits restrict dose optimisation and are a genuine access constraint.",
-        "Initial Auth (months)": "Short initial windows (≤6 months) raise early-discontinuation risk and administrative load on the practice.",
-        "Reauth (months)": "Reauthorization cadence sets ongoing administrative burden — 12 months is the prevailing, lower-friction standard.",
+        "Age Criterion": "Age thresholds size the eligible pool — explicit floors (≥6, ≥18) matter most for pediatric positioning.",
+        "TB Test": "TB screening is standard pre-biologic care, not a true barrier — it is deliberately not penalised in the score.",
+        "Specialist Required": "Dermatologist-only prescribing narrows the writer base; 'in consultation with' language softens it.",
+        "Step Therapy": "The single most material access lever, required in most policies — the primary battleground for access teams.",
+        "Brand Steps": "Biologic step-through is the strongest driver of delay and abandonment — every prior biologic is a barrier beyond the label.",
+        "Generic Steps": "Conventional/oral steps (methotrexate, cyclosporine, acitretin) are label-consistent and depress access far less.",
+        "Phototherapy Step": "Uncommon but consequential — mandatory clinic-administered UVB/PUVA is out of reach for many patients.",
+        "Quantity Limit": "Below-label unit caps restrict dose optimisation — a genuine access constraint.",
+        "Initial Auth (months)": "Short initial windows (≤6 months) raise early-discontinuation risk and practice workload.",
+        "Reauth (months)": "Sets ongoing administrative burden — 12 months is the prevailing, lower-friction standard.",
     }
 
+    control_hint("View control · this tab only")
     pc1, pc2 = st.columns([1, 2])
     with pc1:
-        category = st.selectbox("Parameter category", options=list(PARAM_GROUPS.keys()), index=1)
+        category = st.selectbox("Parameter group", options=list(PARAM_GROUPS.keys()), index=1)
     with pc2:
         opts = [(label, col, kind) for col, kind, label in PARAM_GROUPS[category]]
         chosen_label = st.selectbox("Parameter", options=[lbl for lbl, _, _ in opts], index=0)
     sel_col, sel_kind = next((c, k) for lbl, c, k in opts if lbl == chosen_label)
 
+    is_restrictive = sel_col in ("Brand Steps", "Generic Steps")
+
     left, right = st.columns(2)
     with left:
-        question(f"How does '{chosen_label}' distribute across policies in view?")
+        chart_caption(f"<b>{chosen_label}</b> — distribution across policies in view")
         if sel_kind == "numeric":
             d = df[sel_col].dropna()
             if len(d) == 0:
                 st.info("No data for this parameter in the current filter.")
             else:
                 vc = d.astype(int).value_counts().sort_index()
+                if is_restrictive:
+                    bar_colors = [RESTRICT_RAMP[min(int(x), len(RESTRICT_RAMP) - 1)] for x in vc.index]
+                else:
+                    bar_colors = SEC["param"]
                 fig_p = go.Figure(go.Bar(
                     x=vc.index, y=vc.values,
-                    marker=dict(color=SEC["param"], line=dict(color="#FFFFFF", width=0.5)),
+                    marker=dict(color=bar_colors, line=dict(color="#FFFFFF", width=0.5)),
                     hovertemplate=f"<b>{chosen_label}</b>: %{{x}}<br>%{{y}} policies<extra></extra>"))
                 apply_layout(fig_p, height=300,
-                             xaxis=dict(title=chosen_label, title_font=dict(size=12, color=INK_SOFT)),
+                             xaxis=dict(title=chosen_label, dtick=1, title_font=dict(size=12, color=INK_SOFT)),
                              yaxis=dict(title="Policies", title_font=dict(size=12, color=INK_SOFT)),
                              showlegend=False, bargap=0.22)
                 st.plotly_chart(fig_p, use_container_width=True, config={"displayModeBar": False})
         else:
             vc = df[sel_col].fillna("Not specified").value_counts()
+            n = len(vc)
+            cat_colors = [_FALLBACK_CYCLE[i % len(_FALLBACK_CYCLE)] for i in range(n)]
             fig_p = go.Figure(go.Bar(
                 y=vc.index.tolist(), x=vc.values, orientation="h",
-                marker=dict(color=SEC["param"], line=dict(color="#FFFFFF", width=0.5)),
+                marker=dict(color=cat_colors, line=dict(color="#FFFFFF", width=0.5)),
                 hovertemplate=f"<b>{chosen_label}</b>: %{{y}}<br>%{{x}} policies<extra></extra>"))
-            apply_layout(fig_p, height=max(220, 46 * len(vc) + 80),
+            apply_layout(fig_p, height=max(220, 46 * n + 80),
                          xaxis=dict(title="Policies", title_font=dict(size=12, color=INK_SOFT)),
                          yaxis=dict(title=""), showlegend=False)
             st.plotly_chart(fig_p, use_container_width=True, config={"displayModeBar": False})
     with right:
-        question(f"How does '{chosen_label}' differ by brand?")
+        chart_caption(f"<b>{chosen_label}</b> — by brand")
         if sel_kind == "numeric":
             sub = df.dropna(subset=[sel_col])
             if len(sub) == 0:
@@ -852,9 +919,9 @@ with tab2:
                         fig_b.add_trace(go.Box(
                             x=bsub[sel_col], name=b, marker=dict(color=brand_color(b, i)),
                             line=dict(color=brand_color(b, i)), fillcolor=brand_color(b, i),
-                            opacity=0.55, boxmean=True, orientation="h",
+                            opacity=0.5, boxmean=True, orientation="h",
                             hovertemplate=f"<b>{b}</b><br>%{{x}}<extra></extra>"))
-                apply_layout(fig_b, height=max(280, 60 * len(selected_brands) + 80),
+                apply_layout(fig_b, height=max(280, 58 * len(selected_brands) + 80),
                              xaxis=dict(title=chosen_label, title_font=dict(size=12, color=INK_SOFT)),
                              yaxis=dict(title=""),
                              legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
@@ -881,16 +948,15 @@ with tab2:
 
     interp = PARAM_INSIGHTS.get(sel_col, "")
     if interp:
-        st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
-        implication_tile(st.container(), "Market-access read", interp, accent=SEC["param"])
+        st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
+        insight_tile(st.container(), "Implication", interp, accent=SEC["param"])
 
 # ----------------------------------------------------------------------------
 #  TAB 3 — BRAND COMPARISON
 # ----------------------------------------------------------------------------
 with tab3:
-    section_h2("Brand Comparison",
-               "Scorecards and access-tier composition for the brands in view. The paired analysis below "
-               "always compares the TREMFYA vs STELARA focus pair head-to-head.",
+    section_h2("Brand comparison",
+               "Scorecards and access-tier mix for the brands in view. The paired view compares TREMFYA and STELARA inside the same policy.",
                accent=SEC["compare"])
 
     cards = selected_brands[:4]
@@ -903,16 +969,16 @@ with tab3:
             continue
         metrics = {
             "Policies covered": len(sub),
-            "Mean access score": f"{sub['Access Score'].mean():.1f}",
-            "Median access score": f"{sub['Access Score'].median():.0f}",
-            "Score range": f"{sub['Access Score'].min():.0f}–{sub['Access Score'].max():.0f}",
-            "Step therapy required": f"{(sub['Step Therapy']=='Required').mean()*100:.0f}%",
+            "Mean access (pts)": f"{sub['Access Score'].mean():.0f}",
+            "Median access (pts)": f"{sub['Access Score'].median():.0f}",
+            "Score range (pts)": f"{sub['Access Score'].min():.0f}–{sub['Access Score'].max():.0f}",
+            "Step therapy": f"{(sub['Step Therapy']=='Required').mean()*100:.0f}%",
             "Biologic step (any)": f"{(sub['Brand Steps']>=1).mean()*100:.0f}%",
-            "TB test required": f"{(sub['TB Test']=='Yes').mean()*100:.0f}%",
-            "Quantity limit imposed": f"{(sub['Quantity Limit']=='Yes').mean()*100:.0f}%",
+            "TB test": f"{(sub['TB Test']=='Yes').mean()*100:.0f}%",
+            "Quantity limit": f"{(sub['Quantity Limit']=='Yes').mean()*100:.0f}%",
             "Specialist required": f"{(sub['Specialist Required']=='Required').mean()*100:.0f}%",
-            "Median reauthorization": (f"{sub['Reauth (months)'].median():.0f} months"
-                                       if sub["Reauth (months)"].notna().any() else "—"),
+            "Median reauth": (f"{sub['Reauth (months)'].median():.0f} mo"
+                              if sub["Reauth (months)"].notna().any() else "—"),
         }
         rows_html = "".join(
             f'<tr><td class="label">{k}</td><td class="value">{v}</td></tr>' for k, v in metrics.items())
@@ -920,19 +986,17 @@ with tab3:
         with col:
             st.markdown(
                 f"""<div class="zs-scorecard" style="border-top-color:{acc};">
-  <div class="strap" style="color:{acc};">Brand scorecard</div>
+  <div class="strap" style="color:{acc};">Scorecard</div>
   <h3>{brand}</h3><table>{rows_html}</table></div>""",
                 unsafe_allow_html=True,
             )
 
-    section_h2("Access Tier Composition",
-               "Share of each brand's policies in each FDA-anchored access tier.", accent=SEC["compare"])
-    question("Where does each brand's policy mass concentrate on the restriction spectrum?")
+    section_h2("Access-tier mix", accent=SEC["compare"])
+    chart_caption("Share of each brand's policies in each access tier. More green = lighter management; more red/orange = tighter.")
     tier_data = []
     for b in selected_brands:
         sub = df[df["Brand"] == b]
-        n = len(sub)
-        if n == 0:
+        if len(sub) == 0:
             continue
         vc = sub["Access Tier"].value_counts(normalize=True)
         for t in ACCESS_TIER_ORDER:
@@ -946,16 +1010,15 @@ with tab3:
                 y=sub["Brand"], x=sub["Share"] * 100, orientation="h", name=t,
                 marker=dict(color=ACCESS_TIER_COLOR[t], line=dict(color="#FFFFFF", width=1)),
                 hovertemplate=f"<b>{t}</b><br>%{{y}}: %{{x:.0f}}%% of policies<extra></extra>"))
-        apply_layout(fig_tier, barmode="stack", height=max(220, 52 * len(selected_brands) + 80),
+        apply_layout(fig_tier, barmode="stack", height=max(220, 50 * len(selected_brands) + 80),
                      xaxis=dict(range=[0, 100], ticksuffix="%", title="Share of policies",
                                 title_font=dict(size=12, color=INK_SOFT)),
                      yaxis=dict(title=""),
                      legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
         st.plotly_chart(fig_tier, use_container_width=True, config={"displayModeBar": False})
 
-    # Paired TREMFYA vs STELARA
-    section_h2("Paired Policy Analysis — TREMFYA vs STELARA",
-               "Within the same payer policy, which brand receives the more favourable treatment?",
+    section_h2("Head-to-head · TREMFYA vs STELARA",
+               "Inside the same payer policy, which brand is treated more favourably?",
                accent=SEC["compare"])
     paired = df_all[df_all["Brand"].isin(FOCUS_BRANDS)].copy()
     grp = paired.groupby("Policy ID")["Brand"].nunique()
@@ -971,7 +1034,8 @@ with tab3:
     else:
         pivot = pd.DataFrame()
     if len(pivot) >= 2:
-        question(f"In the {len(pivot)} policies that cover both brands, who scores higher?")
+        chart_caption(f"Each line is one of the <b>{len(pivot)}</b> policies covering both brands. "
+                      f"Dot position = access score; a wider gap means the policy favours one brand more strongly.")
         fig_pair = go.Figure()
         for _, r in pivot.iterrows():
             fig_pair.add_trace(go.Scatter(x=[r["STELARA"], r["TREMFYA"]],
@@ -979,31 +1043,32 @@ with tab3:
                                           line=dict(color=LINE, width=2), showlegend=False, hoverinfo="skip"))
         fig_pair.add_trace(go.Scatter(x=pivot["STELARA"], y=pivot["Policy #"], mode="markers", name="STELARA",
                                       marker=dict(color=STELARA_C, size=13, line=dict(color="#FFFFFF", width=1.5)),
-                                      hovertemplate="<b>STELARA</b><br>%{y}<br>Score: %{x:.0f}<extra></extra>"))
+                                      hovertemplate="<b>STELARA</b><br>%{y}<br>%{x:.0f} pts<extra></extra>"))
         fig_pair.add_trace(go.Scatter(x=pivot["TREMFYA"], y=pivot["Policy #"], mode="markers", name="TREMFYA",
                                       marker=dict(color=TREMFYA_C, size=13, line=dict(color="#FFFFFF", width=1.5)),
-                                      hovertemplate="<b>TREMFYA</b><br>%{y}<br>Score: %{x:.0f}<extra></extra>"))
+                                      hovertemplate="<b>TREMFYA</b><br>%{y}<br>%{x:.0f} pts<extra></extra>"))
         apply_layout(fig_pair, height=max(280, 30 * len(pivot) + 80),
-                     xaxis=dict(range=[-5, 105], title="Access Score", title_font=dict(size=12, color=INK_SOFT)),
+                     xaxis=dict(range=[-5, 105], title="Access Score (pts)",
+                                tickvals=[0, 25, 50, 75, 100], title_font=dict(size=12, color=INK_SOFT)),
                      yaxis=dict(title=""), legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
         st.plotly_chart(fig_pair, use_container_width=True, config={"displayModeBar": False})
         t_h = int((pivot["delta"] > 0).sum()); s_h = int((pivot["delta"] < 0).sum())
+        tie = int((pivot["delta"] == 0).sum())
         avg_d = pivot["delta"].mean()
         cc = st.columns(3)
-        implication_tile(cc[0], "TREMFYA wins", f"<b>{t_h} of {len(pivot)}</b> shared policies score TREMFYA above STELARA.", accent=TREMFYA_C)
-        implication_tile(cc[1], "STELARA wins", f"<b>{s_h} of {len(pivot)}</b> shared policies score STELARA above TREMFYA.", accent=STELARA_C)
-        implication_tile(cc[2], "Within-policy gap", f"Average within-policy advantage for TREMFYA: <b>{avg_d:+.1f}</b> points.", accent=SEC["compare"])
+        insight_tile(cc[0], "TREMFYA favoured", f"<b>{t_h} of {len(pivot)}</b> shared policies score TREMFYA higher.", accent=TREMFYA_C)
+        insight_tile(cc[1], "STELARA favoured", f"<b>{s_h} of {len(pivot)}</b> shared policies score STELARA higher{f' · {tie} tied' if tie else ''}.", accent=STELARA_C)
+        insight_tile(cc[2], "Average gap", f"TREMFYA vs STELARA within-policy: <b>{avg_d:+.0f} pts</b>.", accent=SEC["compare"])
     else:
-        st.info("Insufficient policies covering both TREMFYA and STELARA for a paired comparison under the current filters.")
+        st.info("Not enough policies cover both TREMFYA and STELARA under the current filters for a paired view.")
 
 # ----------------------------------------------------------------------------
 #  TAB 4 — ACCESS DRIVERS
 # ----------------------------------------------------------------------------
 with tab4:
-    section_h2("Restriction Patterns",
-               "The prior-authorization levers payers apply most often across the brands in view.",
-               accent=SEC["drivers"])
-    question("Which restrictions are most prevalent, and where do the brands diverge?")
+    section_h2("Restriction patterns",
+               "The prior-authorization controls payers apply most often.", accent=SEC["drivers"])
+    chart_caption("Share of policies imposing each control, by brand. The controls higher up are the most common.")
     rb = restriction_by_brand(df, selected_brands)
     overall = restriction_share(df).sort_values("Share", ascending=True)
     order = overall["Restriction"].tolist()
@@ -1014,16 +1079,16 @@ with tab4:
             y=sub["Restriction"], x=sub["Share"] * 100, orientation="h", name=b,
             marker=dict(color=brand_color(b, i), line=dict(color="#FFFFFF", width=0.5)),
             hovertemplate=f"<b>{b}</b><br>%{{y}}<br>%{{x:.0f}}%% of policies<extra></extra>"))
-    apply_layout(fig_r, height=max(340, 52 * len(order) + 60), barmode="group",
-                 xaxis=dict(range=[0, 105], ticksuffix="%", title="Share of policies imposing the restriction",
+    apply_layout(fig_r, height=max(340, 50 * len(order) + 60), barmode="group",
+                 xaxis=dict(range=[0, 105], ticksuffix="%", title="Share of policies",
                             title_font=dict(size=12, color=INK_SOFT)),
                  yaxis=dict(title=""), legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0), bargap=0.18)
     st.plotly_chart(fig_r, use_container_width=True, config={"displayModeBar": False})
 
-    section_h2("Step-Therapy Intensity",
-               "Step therapy is the single most material access barrier — how many hurdles must a patient clear?",
+    section_h2("Step-therapy intensity",
+               "How many therapies a patient must try first — the biggest single driver of access.",
                accent=SEC["drivers"])
-    question("How many therapies must a patient try before accessing each brand?")
+    chart_caption("Count of required prior therapies per policy. <b>More steps = tighter access</b> (bars shaded red as steps rise).")
     step_rows = []
     for b in selected_brands:
         sub = df[df["Brand"] == b].dropna(subset=["Total Steps"])
@@ -1032,24 +1097,24 @@ with tab4:
     step_df = pd.DataFrame(step_rows)
     if not step_df.empty:
         all_steps = list(range(0, int(step_df["Steps"].max()) + 1))
-        fig_steps = go.Figure()
-        for i, b in enumerate(selected_brands):
-            sb = step_df[step_df["Brand"] == b]
-            vc = sb["Steps"].value_counts().reindex(all_steps, fill_value=0)
-            fig_steps.add_trace(go.Bar(x=vc.index, y=vc.values, name=b,
-                                       marker=dict(color=brand_color(b, i), line=dict(color="#FFFFFF", width=0.5)),
-                                       hovertemplate=f"<b>{b}</b><br>%{{x}} steps · %{{y}} policies<extra></extra>"))
-        apply_layout(fig_steps, height=300, barmode="group",
-                     xaxis=dict(title="Total step-therapy hurdles required", dtick=1,
+        # Aggregate, colour each step-count bucket by restrictiveness ramp.
+        agg = step_df.groupby("Steps").size().reindex(all_steps, fill_value=0)
+        fig_steps = go.Figure(go.Bar(
+            x=agg.index, y=agg.values,
+            marker=dict(color=[RESTRICT_RAMP[min(s, len(RESTRICT_RAMP) - 1)] for s in agg.index],
+                        line=dict(color="#FFFFFF", width=0.5)),
+            hovertemplate="%{x} prior step(s) · %{y} policies<extra></extra>"))
+        apply_layout(fig_steps, height=300,
+                     xaxis=dict(title="Required prior therapies", dtick=1,
                                 title_font=dict(size=12, color=INK_SOFT)),
-                     yaxis=dict(title="Number of policies", title_font=dict(size=12, color=INK_SOFT)),
-                     legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0), bargap=0.25)
+                     yaxis=dict(title="Policies", title_font=dict(size=12, color=INK_SOFT)),
+                     showlegend=False, bargap=0.25)
         st.plotly_chart(fig_steps, use_container_width=True, config={"displayModeBar": False})
 
-    section_h2("Authorization Windows",
-               "Approval durations — shorter windows mean more frequent administrative touchpoints.",
+    section_h2("Authorization windows",
+               "Approval cycle length — shorter windows mean more frequent reauthorization touchpoints.",
                accent=SEC["drivers"])
-    question("How long are the approval cycles for each brand?")
+    chart_caption("Median months for initial approval and reauthorization, by brand. Longer = lighter ongoing burden.")
     auth_rows = []
     for b in selected_brands:
         sub = df[df["Brand"] == b]
@@ -1068,21 +1133,19 @@ with tab4:
     st.plotly_chart(fig_auth, use_container_width=True, config={"displayModeBar": False})
 
 # ----------------------------------------------------------------------------
-#  TAB 5 — METHODOLOGY & INSIGHTS  (visual + interactive)
+#  TAB 5 — METHODOLOGY
 # ----------------------------------------------------------------------------
 with tab5:
-    section_h2("How the Access Score Works",
-               "The access score is a 0–100 index built by binding-constraint logic and anchored to the "
-               "FDA label. It is deterministic and auditable — every point is traceable to a policy fact.",
+    section_h2("How the access score works",
+               "A 0–100 index anchored to the FDA label. Deterministic and auditable — every point traces to a policy fact.",
                accent=SEC["method"])
 
-    # The ladder — clarifies exactly what the 'points' mean
     st.markdown('<div style="height:2px"></div>', unsafe_allow_html=True)
     rungs = [
-        ("100", "Open", ACCESS_TIER_COLOR["Open"], "Covered, no meaningful utilization management — effectively unrestricted."),
-        ("75", "Preferred", ACCESS_TIER_COLOR["Preferred"], "Covered, lighter management than the FDA label (e.g. no step therapy)."),
-        ("50", "Parity", ACCESS_TIER_COLOR["Parity"], "Management mirrors the FDA label — one conventional step, standard reauth."),
-        ("25", "Restricted", ACCESS_TIER_COLOR["Restricted"], "More restrictive than the label — typically biologic step-through."),
+        ("100", "Open", ACCESS_TIER_COLOR["Open"], "Covered, no meaningful management — effectively unrestricted."),
+        ("75", "Preferred", ACCESS_TIER_COLOR["Preferred"], "Covered, lighter than the FDA label (e.g. no step therapy)."),
+        ("50", "Parity", ACCESS_TIER_COLOR["Parity"], "Mirrors the FDA label — one conventional step, standard reauth."),
+        ("25", "Restricted", ACCESS_TIER_COLOR["Restricted"], "Tighter than the label — typically biologic step-through."),
         ("0", "No access", ACCESS_TIER_COLOR["No access"], "Not covered / excluded for plaque psoriasis."),
     ]
     ladder = "".join(
@@ -1091,42 +1154,40 @@ with tab5:
         for p, n, c, d in rungs)
     st.markdown(ladder, unsafe_allow_html=True)
     st.markdown(
-        f"""<div class="zs-obs" style="border-left-color:{SEC['method']}; margin-top:6px;">
-        <div class="zs-obs-tag" style="color:{SEC['method']};">What the points mean</div>
-        <div class="zs-obs-text">The number is <b>not</b> a quality grade — it is an <b>access-restrictiveness index relative to the FDA label</b>.
-        50 is the reference point (the policy asks for what the label contemplates). Points are <b>added back toward 75–100</b> when a policy is lighter than the label,
-        and <b>deducted toward 25–0</b> for each payer-imposed barrier beyond it — with <b>biologic step-through</b> the dominant deduction.</div></div>""",
+        f"""<div class="zs-obs" style="border-left-color:{SEC['method']}; margin-top:4px;">
+        <div class="zs-obs-tag" style="color:{SEC['method']};">Reading the score</div>
+        <div class="zs-obs-text">The number is an <b>access-restrictiveness index versus the FDA label</b>, not a quality grade.
+        <b>50 = parity.</b> Points are added toward 75–100 when a policy is lighter than the label, and deducted toward 25–0 for each
+        added barrier — with <b>biologic step-through</b> the dominant deduction.</div></div>""",
         unsafe_allow_html=True)
 
-    # The three-stage logic
-    section_h2("The Three-Stage Logic", accent=SEC["method"])
+    section_h2("The three-stage logic", accent=SEC["method"])
     sc = st.columns(3)
     stages = [
         ("Stage 1 · Coverage gate", "#B91C1C",
-         "Is the brand covered for PsO? If excluded or not on formulary → <b>0</b>, and scoring stops. 0 is reserved strictly for genuine non-access."),
+         "Covered for PsO? If excluded → <b>0</b> and scoring stops. 0 is reserved for genuine non-access."),
         ("Stage 2 · Step-therapy anchor", "#CA8A04",
-         "The binding constraint sets the base tier. <b>Any biologic step-through → 25.</b> A conventional/phototherapy step → <b>50</b> (label-consistent). No step + criteria reviewed → <b>75</b>."),
+         "The binding constraint sets the tier. <b>Any biologic step → 25.</b> Conventional/phototherapy step → <b>50</b>. No step → <b>75</b>."),
         ("Stage 3 · Secondary burden", "#16A34A",
-         "Specialist gating, below-label quantity limits, short reauth, extra conventional steps each add burden — nudging the anchor down. <b>TB testing is never penalised</b> (clinical norm)."),
+         "Specialist gating, below-label quantity limits, short reauth and extra steps each nudge the anchor down. <b>TB testing is never penalised.</b>"),
     ]
     for col, (t, c, d) in zip(sc, stages):
         col.markdown(
             f"""<div class="zs-arch" style="border-top-color:{c}; height:100%;">
               <div class="name" style="color:{c};">{t}</div>
-              <div class="desc" style="font-size:12.5px;">{d}</div></div>""",
+              <div class="desc">{d}</div></div>""",
             unsafe_allow_html=True)
 
-    # Interactive simulator
-    section_h2("Interactive Access-Score Simulator",
-               "Toggle a hypothetical policy's restrictions and watch the score resolve in real time — "
-               "the same logic that scores every policy in this dashboard.",
+    section_h2("Score simulator",
+               "Set a hypothetical policy's controls and watch the score resolve live — the exact logic behind every record.",
                accent=SEC["method"])
+    control_hint("Interactive · adjust the inputs")
     sim_in, sim_out = st.columns([1.05, 1])
     with sim_in:
         covered = st.toggle("Covered for plaque psoriasis", value=True)
         cb1, cb2 = st.columns(2)
         with cb1:
-            b_steps = st.select_slider("Biologic step-throughs", options=[0, 1, 2, 3], value=0)
+            b_steps = st.select_slider("Biologic steps", options=[0, 1, 2, 3], value=0)
             g_steps = st.select_slider("Conventional/oral steps", options=[0, 1, 2, 3], value=1)
             photo = st.checkbox("Phototherapy step required", value=False)
         with cb2:
@@ -1141,7 +1202,7 @@ with tab5:
     with sim_out:
         gauge = go.Figure(go.Indicator(
             mode="gauge+number", value=score,
-            number=dict(font=dict(size=46, color=INK, family="Fraunces")),
+            number=dict(font=dict(size=46, color=INK, family="Fraunces"), suffix=" pts"),
             gauge=dict(
                 axis=dict(range=[0, 100], tickvals=[0, 25, 50, 75, 100], tickfont=dict(size=10, color=INK_SOFT)),
                 bar=dict(color=ACCESS_TIER_COLOR[tier], thickness=0.28),
@@ -1169,43 +1230,40 @@ with tab5:
         <div class="zs-obs-text">{' &nbsp;→&nbsp; '.join(why)}</div></div>""",
         unsafe_allow_html=True)
 
-    # Consultant insights
-    section_h2("What a Market-Access Consultant Takes From This",
-               "The decisions this lens informs for a brand and field team.", accent=SEC["method"])
+    section_h2("Where to act", "Priorities for the brand and field team.", accent=SEC["method"])
     ic = st.columns(2)
     insights = [
         ("Target the binding constraint", SEC["drivers"],
-         "Biologic step-through is the single largest access deduction. One negotiated removal of a step-edit "
-         "moves a policy from Restricted (25) to Parity (50) — a bigger access gain than any number of minor concessions."),
+         "Removing one biologic step moves a policy from Restricted (25) to Parity (50) — a bigger gain than any number of minor concessions."),
         ("Account-led, not brand-led", SEC["compare"],
-         "Within-brand access varies more than between-brand access. Field-team prioritisation should be by payer "
-         "account at the Restricted/No-access end, where the addressable-population upside is concentrated."),
-        ("Protect against false 'open' reads", SEC["method"],
-         "A near-empty extraction is held at Parity, never promoted to Preferred/Open. For a brand team this means the "
-         "lens will not over-state access where a policy simply could not be parsed — a conservative, defensible posture."),
+         "Access varies more across payers than across brands. Prioritise accounts at the Restricted / No-access end, where upside is concentrated."),
+        ("Don't over-state open access", SEC["method"],
+         "A sparse policy is held at Parity, never promoted to Preferred/Open — a conservative posture that avoids over-claiming access."),
         ("Administrative burden as a soft lever", SEC["param"],
-         "Short reauth windows and specialist gating don't block access but raise abandonment risk. They are the "
-         "secondary levers to raise once the step-edit fight is won — and quick wins for patient-services programmes."),
+         "Short reauth windows and specialist gating raise abandonment risk without blocking access — quick wins for patient-services programmes."),
     ]
     for i, (t, c, d) in enumerate(insights):
-        implication_tile(ic[i % 2], t, d, accent=c)
+        insight_tile(ic[i % 2], t, d, accent=c)
 
 # ----------------------------------------------------------------------------
-#  TAB 6 — POLICY EXPLORER (colourised)
+#  TAB 6 — POLICY EXPLORER
 # ----------------------------------------------------------------------------
 with tab6:
-    section_h2("Policy Explorer",
-               "Drill into individual policy records. Pick a brand, then a policy, to see the full extracted "
-               "parameter set, grouped into colour-coded sections.",
+    section_h2("Policy explorer",
+               "Open any single policy to see its full extracted parameter set.",
                accent=SEC["explorer"])
 
-    nav1, nav2 = st.columns([1, 3])
+    # Aligned view-control strip (labels above each control keep them on one baseline).
+    control_hint("View control · this tab only")
+    nav1, nav2 = st.columns([1, 2])
     with nav1:
         explore_brand = st.selectbox("Brand", options=selected_brands, index=0)
     with nav2:
-        sort_choice = st.radio("Sort policies by",
-                               options=["Most restrictive first", "Most open first", "Policy ID"],
-                               index=0, horizontal=True)
+        sort_choice = st.selectbox(
+            "Sort by",
+            options=["Most restrictive first", "Most open first", "Policy ID"],
+            index=0,
+        )
     sub = df[df["Brand"] == explore_brand].copy()
     if sort_choice == "Most restrictive first":
         sub = sub.sort_values("Access Score", ascending=True, na_position="last")
@@ -1219,9 +1277,9 @@ with tab6:
     else:
         def policy_label(row):
             score = f"{int(row['Access Score'])}" if pd.notna(row["Access Score"]) else "—"
-            return f"{row['Policy #']}  ·  Score {score}  ·  {row['Access Tier']}"
+            return f"{row['Policy #']}  ·  {score} pts  ·  {row['Access Tier']}"
         sub["__label"] = sub.apply(policy_label, axis=1)
-        st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
+
         compare = st.toggle("Compare two policies side by side", value=False)
         if not compare:
             chosen = st.selectbox(f"Select a {explore_brand} policy", options=sub["__label"].tolist(), index=0)
@@ -1235,9 +1293,8 @@ with tab6:
                                   index=1 if len(sub) > 1 else 0, key="pb")
             panels = [sub[sub["__label"] == c1].iloc[0], sub[sub["__label"] == c2].iloc[0]]
 
-        st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
+        st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
 
-        # Colour-coded field groups
         GROUPS = [
             ("Eligibility & screening", "#2563EB", [
                 ("Age criterion", lambda r: r["Age Criterion"]),
@@ -1246,8 +1303,8 @@ with tab6:
             ]),
             ("Step therapy", "#D97706", [
                 ("Step therapy", lambda r: r["Step Therapy"]),
-                ("Brand-step requirements", lambda r: f"{int(r['Brand Steps'])}" if pd.notna(r['Brand Steps']) else "—"),
-                ("Generic-step requirements", lambda r: f"{int(r['Generic Steps'])}" if pd.notna(r['Generic Steps']) else "—"),
+                ("Biologic steps", lambda r: f"{int(r['Brand Steps'])}" if pd.notna(r['Brand Steps']) else "—"),
+                ("Conventional steps", lambda r: f"{int(r['Generic Steps'])}" if pd.notna(r['Generic Steps']) else "—"),
                 ("Phototherapy step", lambda r: r["Phototherapy Step"]),
             ]),
             ("Utilization & duration", "#0D9488", [
@@ -1255,9 +1312,9 @@ with tab6:
                 ("Initial authorization", lambda r: (f"{int(r['Initial Auth (months)'])} months"
                                                      if pd.notna(r['Initial Auth (months)'])
                                                      else str(r.get('Initial Authorization Duration(in-months)') or '—'))),
-                ("Reauthorization duration", lambda r: (f"{int(r['Reauth (months)'])} months"
-                                                        if pd.notna(r['Reauth (months)'])
-                                                        else str(r.get('Reauthorization Duration(in-months)') or '—'))),
+                ("Reauthorization", lambda r: (f"{int(r['Reauth (months)'])} months"
+                                               if pd.notna(r['Reauth (months)'])
+                                               else str(r.get('Reauthorization Duration(in-months)') or '—'))),
             ]),
         ]
 
@@ -1270,16 +1327,15 @@ with tab6:
                 bcol = brand_color(row["Brand"])
                 score_html = f"{score}" if score is not None else "—"
                 st.markdown(
-                    f"""
-<div style="background:{CARD}; border:1px solid {LINE}; border-top:5px solid {bcol};
-            border-radius:6px; padding:16px 18px; margin-bottom:12px;">
-  <div style="font-size:10.5px; letter-spacing:0.16em; text-transform:uppercase;
+                    f"""<div style="background:{CARD}; border:1px solid {LINE}; border-top:5px solid {bcol};
+            border-radius:6px; padding:15px 18px; margin-bottom:11px;">
+  <div style="font-size:10px; letter-spacing:0.14em; text-transform:uppercase;
               color:{bcol}; font-weight:700;">{row['Brand']} · {row['Policy #']}</div>
   <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
     <div>
       <div style="font-family:'Fraunces',serif; font-size:32px; font-weight:600; color:{INK}; line-height:1;">
-        {score_html}<span style="font-size:14px; color:{SLATE}; font-family:Manrope; margin-left:6px;">/ 100</span></div>
-      <div style="font-size:11px; color:{SLATE}; margin-top:4px; letter-spacing:0.08em;
+        {score_html}<span style="font-size:13px; color:{SLATE}; font-family:Manrope; margin-left:6px;">/ 100 pts</span></div>
+      <div style="font-size:10.5px; color:{SLATE}; margin-top:4px; letter-spacing:0.08em;
                   text-transform:uppercase; font-weight:600;">Access score</div>
     </div>
     <div style="background:{tier_color}; color:#FFFFFF; padding:5px 12px; border-radius:3px;
@@ -1309,21 +1365,20 @@ with tab6:
                     with st.expander("Step-therapy language (verbatim)"):
                         st.write(step_text)
                 if pd.notna(reauth_text) and str(reauth_text).strip().lower() not in ("no", "nan", ""):
-                    with st.expander("Reauthorization requirements (verbatim)"):
+                    with st.expander("Reauthorization language (verbatim)"):
                         st.write(reauth_text)
                 if pd.notna(qty_text) and len(str(qty_text).strip()) > 6 and str(qty_text).strip().lower() not in ("no", "nan"):
                     with st.expander("Quantity-limit language (verbatim)"):
                         st.write(qty_text)
-                with st.expander("Source policy identifier"):
+                with st.expander("Source policy file"):
                     st.code(row["Policy ID"] + ".pdf", language="text")
 
 # ============================================================================
 #  FOOTER
 # ============================================================================
 st.markdown(
-    f"""
-<div class="zs-footer">
-  <span>ZS · Market Access Practice · Plaque Psoriasis Policy Lens</span>
+    f"""<div class="zs-footer">
+  <span>ZS · Market Access · Plaque Psoriasis Policy Lens</span>
   <span>{df_all['Policy ID'].nunique()} policies · {len(ALL_BRANDS)} brands · TREMFYA & STELARA in focus</span>
 </div>""",
     unsafe_allow_html=True,
